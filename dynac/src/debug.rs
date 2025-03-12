@@ -22,19 +22,21 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
         print!("{:08} ", chunk.lines[offset]);
     }
 
-    let instruction = chunk.code[offset];
+    let instruction = chunk::OpCode::from_byte(chunk.code[offset]);
     match instruction {
-        chunk::OpCode::OP_CONSTANT_CODE => {
-            constant_instruction("OP_CONSTANT", chunk, offset)
+        Some(chunk::OpCode::OpConstant) => {
+            constant_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
-        chunk::OpCode::OP_NEGATE_CODE => {
-            simple_instruction("OP_NEGATE", offset)
-        }
-        chunk::OpCode::OP_RETURN_CODE => {
-            simple_instruction("OP_RETURN", offset)
+        Some(chunk::OpCode::OpNegate) |
+        Some(chunk::OpCode::OpAdd) |
+        Some(chunk::OpCode::OpSubtract) |
+        Some(chunk::OpCode::OpMultiply) |
+        Some(chunk::OpCode::OpDivide) |
+        Some(chunk::OpCode::OpReturn) => {
+            simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
         _ => {
-            println!("Unknown opcode {}", instruction);/*  */
+            println!("Unknown opcode {}", &chunk::OpCode::byte_to_string(&instruction).to_string());/*  */
             offset + 1
         }
     }

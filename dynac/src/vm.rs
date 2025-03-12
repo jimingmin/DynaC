@@ -64,21 +64,33 @@ impl VM {
             debug_feature::disassemble_instruction(&self);
 
             let instruction = match self.read_byte() {
-                Some(byte) => byte,
+                Some(byte) => chunk::OpCode::from_byte(byte),
                 None => return Err("Unexpected end of bytecode"),
             };
 
             match instruction {
-                chunk::OpCode::OP_CONSTANT_CODE => {
+                Some(chunk::OpCode::OpConstant) => {
                     if let Some(constant) = self.read_constant() {
                         self.push(constant);
                     }
                 }
-                chunk::OpCode::OP_NEGATE_CODE => {
+                Some(chunk::OpCode::OpAdd) => {
+                    self.BinaryOperation(chunk::OpCode::OpAdd)
+                }
+                Some(chunk::OpCode::OpSubtract) => {
+                    self.BinaryOperation(chunk::OpCode::OpSubtract)
+                }
+                Some(chunk::OpCode::OpMultiply) => {
+                    self.BinaryOperation(chunk::OpCode::OpMultiply)
+                }
+                Some(chunk::OpCode::OpDivide) => {
+                    self.BinaryOperation(chunk::OpCode::OpDivide)
+                }
+                Some(chunk::OpCode::OpNegate) => {
                     let byte = -self.pop();
                     self.push(byte);
                 }
-                chunk::OpCode::OP_RETURN_CODE => {
+                Some(chunk::OpCode::OpReturn) => {
                     print_value(self.pop());
                     println!();
                     return Ok(InterpretResult::InterpretOk);
@@ -104,6 +116,18 @@ impl VM {
             None => return None,
         };
         Some(self.chunk.constants[instruction as usize])
+    }
+
+    fn BinaryOperation(&mut self, op_code: chunk::OpCode) {
+        let a = self.pop();
+        let b = self.pop();
+        match op_code {
+            chunk::OpCode::OpAdd => self.push(a + b),
+            chunk::OpCode::OpSubtract => self.push(a - b),
+            chunk::OpCode::OpMultiply => self.push(a * b),
+            chunk::OpCode::OpDivide => self.push(a / b),
+            _ => panic!("Unknown binary operator"),
+        }
     }
 }
 

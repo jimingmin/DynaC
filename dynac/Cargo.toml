@@ -10,3 +10,5 @@ default = ["debug_trace_execution"]
 debug_trace_execution = []
 
 [dependencies]
+strum = "0.24"
+strum_macros = "0.24"

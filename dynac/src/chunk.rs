@@ -1,32 +1,48 @@
+use strum_macros::{EnumString, Display};
 use crate::value::{Value, ValueArray};
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, Display)]
 pub enum OpCode {
     OpConstant,
+    OpAdd,
+    OpSubtract,
+    OpMultiply,
+    OpDivide,
     OpNegate,
     OpReturn,
-    Unknown(u8),
+    //Unknown(u8),
 }
 
-impl OpCode {
-    pub const OP_RETURN_CODE: u8 = 1;
-    pub const OP_CONSTANT_CODE: u8 = 2;
-    pub const OP_NEGATE_CODE: u8 = 3;
+const OPCODE_ARRAY: [Option<OpCode>; 256] = {
+    let mut arr = [None; 256];
 
-    pub fn from_byte(byte: u8) -> Option<OpCode> {
-        match byte {
-            OP_CONSTANT_CODE => Some(OpCode::OpConstant),
-            OP_NEGATE_CODE => Some(OpCode::OpNegate),
-            OP_RETURN_CODE => Some(OpCode::OpReturn),
-            _ => None,
-        }
+    arr[OpCode::OpConstant as u8 as usize] = Some(OpCode::OpConstant);
+    arr[OpCode::OpAdd as u8 as usize] = Some(OpCode::OpAdd);
+    arr[OpCode::OpSubtract as u8 as usize] = Some(OpCode::OpSubtract);
+    arr[OpCode::OpMultiply as u8 as usize] = Some(OpCode::OpMultiply);
+    arr[OpCode::OpDivide as u8 as usize] = Some(OpCode::OpDivide);
+    arr[OpCode::OpNegate as u8 as usize] = Some(OpCode::OpNegate);
+    arr[OpCode::OpReturn as u8 as usize] = Some(OpCode::OpReturn);
+    arr
+};
+
+#[allow(non_snake_case)]
+impl OpCode {
+    #[inline(always)]
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        OPCODE_ARRAY[byte as usize]
     }
 
-    pub fn to_byte(&self) -> u8 {
-        match self {
-            OpCode::OpConstant => Self::OP_CONSTANT_CODE,
-            OpCode::OpNegate => Self::OP_NEGATE_CODE,
-            OpCode::OpReturn => Self::OP_RETURN_CODE,
-            OpCode::Unknown(unknown) => *unknown,
+    #[inline(always)]
+    pub fn to_byte(self) -> u8 {
+        self as u8
+    }
+
+    pub fn byte_to_string(byte: &Option<OpCode>) -> String {
+        match byte {
+            Some(code) => code.to_string(),
+            None => "None".to_string(),
         }
     }
 }
