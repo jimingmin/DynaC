@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::Chars};
+use std::{collections::HashMap, iter::Peekable, str::Chars, sync::{mpsc::TryRecvError, OnceLock}, thread::current};
 use strum_macros::{EnumString, Display};
 
 #[repr(u8)]
@@ -54,6 +54,45 @@ pub enum TokenType {
     TokenEof,
 }
 
+static KEYWORDS: phf::Map<&'static str, TokenType> = phf::phf_map! {
+    "and" => TokenType::TokenAnd,
+    "class" => TokenType::TokenClass,
+    "else" => TokenType::TokenElse,
+    "if" => TokenType::TokenIf,
+    "nil" => TokenType::TokenNil,
+    "or" => TokenType::TokenOr,
+    "print" => TokenType::TokenPrint,
+    "return" => TokenType::TokenReturn,
+    "super" => TokenType::TokenSuper,
+    "var" => TokenType::TokenVar,
+    "while" => TokenType::TokenWhile,
+    "for" => TokenType::TokenFor,
+    "false" => TokenType::TokenFalse,
+    "fun" => TokenType::TokenFun,
+    "this" => TokenType::TokenThis,
+    "true" => TokenType::TokenTrue,
+};
+
+#[derive(Debug)]
+struct TrieNode {
+    children: HashMap<char, TrieNode>,
+    token_type: Option<TokenType>,
+    is_end: bool,
+}
+
+impl TrieNode {
+    fn new() -> Self {
+        TrieNode {
+            children: HashMap::new(),
+            token_type: None,
+            is_end: false,
+        }
+    }
+}
+
+static TRIE_ROOT: OnceLock<TrieNode> = OnceLock::new();
+
+#[derive(Debug)]
 pub struct Token<'a> {
     pub token_type: TokenType,
     pub value: &'a str,
@@ -70,6 +109,19 @@ pub struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
     pub fn new(source: &'a str) -> Box<Scanner<'a>> {
+        TRIE_ROOT.get_or_init(|| {
+            let mut root = TrieNode::new();
+            for (keyword, token) in KEYWORDS.entries() {
+                let mut current_node = &mut root;
+                for c in keyword.chars() {
+                    current_node = current_node.children.entry(c).or_insert(TrieNode::new());
+                }
+                current_node.token_type = Some(*token);
+                current_node.is_end = true;
+            }
+            root
+        });
+
         let chars = source.chars().peekable();
         Box::new(Scanner {
             source,
@@ -151,8 +203,14 @@ impl<'a> Scanner<'a> {
         ch.is_ascii_alphabetic() || ch == '_'
     }
 
-    fn identifier_type() -> TokenType {
-        TokenType::TokenIdentifier
+    fn identifier_type(&mut self) -> TokenType {
+        //TokenType::TokenIdentifier
+        let keyword = self.check_keyword();
+        match keyword {
+            Some(TokenType::TokenError) => TokenType::TokenError,
+            Some(token_type) => token_type,
+            None => TokenType::TokenError,
+        }
     }
 
     fn make_identifier_token(&mut self) -> Token<'a> {
@@ -162,7 +220,8 @@ impl<'a> Scanner<'a> {
                 _ => break,
             };
         }
-        self.make_token(Self::identifier_type())
+        let token_type = self.identifier_type();
+        self.make_token(token_type)
     }
 
     fn make_number_token(&mut self) -> Token<'a> {
@@ -287,6 +346,29 @@ impl<'a> Scanner<'a> {
         false
     }
 
+    fn check_keyword(&mut self) -> Option<TokenType> {
+        let trie_root = TRIE_ROOT.get().expect("Trie not initialized");
+        let mut current_node = trie_root;
+
+        let mut keyword = Some(TokenType::TokenIdentifier);
+        let substring = &self.source[self.start..self.current];
+        for ch in substring.chars() {
+            match current_node.children.get(&ch) {
+                Some(child) => {
+                    current_node = child;
+                    if current_node.is_end {
+                        keyword = current_node.token_type;
+                    }
+                },
+                None => return Some(TokenType::TokenIdentifier),
+            }
+        }
+        if current_node.is_end {
+            keyword = current_node.token_type;
+        }
+        keyword
+    }
+
     fn advance(&mut self) -> char {
         if let Some(next_char) = self.chars.next() {
             self.current += next_char.len_utf8();
@@ -294,5 +376,47 @@ impl<'a> Scanner<'a> {
         } else {
             '\0'
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::scanner::TokenType;
+
+    use super::Scanner;
+
+    #[test]
+    fn test_check_keyword() {
+        let mut scanner = Scanner::new("this is for if fun  fun1 forfor %%dadf");
+        let mut token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenThis);
+        assert!(token.value == "this");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenIdentifier);
+        assert!(token.value == "is");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenFor);
+        assert!(token.value == "for");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenIf);
+        assert!(token.value == "if");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenFun);
+        assert!(token.value == "fun");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenIdentifier);
+        assert!(token.value == "fun1");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenIdentifier);
+        assert!(token.value == "forfor");
+
+        token = scanner.scan_token();
+        assert!(token.token_type == TokenType::TokenError);
     }
 }
