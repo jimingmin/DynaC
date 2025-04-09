@@ -21,19 +21,31 @@ impl VM {
         Box::new(VM{chunk, ip: 0, stack:[0.0; MAX_STACK_SIZE], stack_top_pos: 0})
     }
 
-    pub fn interpret(&mut self, chunk: Box<chunk::Chunk>) -> InterpretResult {
-        self.chunk = chunk;
-
-        match self.run() {
-            Ok(result) => result,
-            Err(e) => {
-                println!("Error during interpretation: {}", e);
-                return InterpretResult::InterpretRuntimeError;
-            },
+    pub fn interpret(&mut self, source: &str) -> InterpretResult {
+        if self.compile(source) {
+            return InterpretResult::InterpretCompileError;
         }
+        
+        InterpretResult::InterpretOk
     }
 
-    pub fn push(&mut self, value: Value) {
+    // pub fn interpret(&mut self, chunk: Box<chunk::Chunk>) -> InterpretResult {
+    //     self.chunk = chunk;
+
+    //     match self.run() {
+    //         Ok(result) => result,
+    //         Err(e) => {
+    //             println!("Error during interpretation: {}", e);
+    //             return InterpretResult::InterpretRuntimeError;
+    //         },
+    //     }
+    // }
+
+    fn compile(&mut self, source: &str) -> bool {
+        true
+    }
+
+    fn push(&mut self, value: Value) {
         if self.stack_top_pos < MAX_STACK_SIZE {
             self.stack[self.stack_top_pos] = value;
             self.stack_top_pos += 1;
@@ -42,7 +54,7 @@ impl VM {
         }
     }
 
-    pub fn pop(&mut self) -> Value {
+    fn pop(&mut self) -> Value {
         if self.stack_top_pos > 0 {
             self.stack_top_pos -= 1;
             self.stack[self.stack_top_pos]
@@ -51,7 +63,7 @@ impl VM {
         }
     }
 
-    pub fn peek(&self) -> Option<Value> {
+    fn peek(&self) -> Option<Value> {
         if self.stack_top_pos > 0 {
             Some(self.stack[self.stack_top_pos - 1])
         } else {
@@ -69,28 +81,28 @@ impl VM {
             };
 
             match instruction {
-                Some(chunk::OpCode::OpConstant) => {
+                Some(chunk::OpCode::Constant) => {
                     if let Some(constant) = self.read_constant() {
                         self.push(constant);
                     }
                 }
-                Some(chunk::OpCode::OpAdd) => {
-                    self.BinaryOperation(chunk::OpCode::OpAdd)
+                Some(chunk::OpCode::Add) => {
+                    self.BinaryOperation(chunk::OpCode::Add)
                 }
-                Some(chunk::OpCode::OpSubtract) => {
-                    self.BinaryOperation(chunk::OpCode::OpSubtract)
+                Some(chunk::OpCode::Subtract) => {
+                    self.BinaryOperation(chunk::OpCode::Subtract)
                 }
-                Some(chunk::OpCode::OpMultiply) => {
-                    self.BinaryOperation(chunk::OpCode::OpMultiply)
+                Some(chunk::OpCode::Multiply) => {
+                    self.BinaryOperation(chunk::OpCode::Multiply)
                 }
-                Some(chunk::OpCode::OpDivide) => {
-                    self.BinaryOperation(chunk::OpCode::OpDivide)
+                Some(chunk::OpCode::Divide) => {
+                    self.BinaryOperation(chunk::OpCode::Divide)
                 }
-                Some(chunk::OpCode::OpNegate) => {
+                Some(chunk::OpCode::Negate) => {
                     let byte = -self.pop();
                     self.push(byte);
                 }
-                Some(chunk::OpCode::OpReturn) => {
+                Some(chunk::OpCode::Return) => {
                     print_value(self.pop());
                     println!();
                     return Ok(InterpretResult::InterpretOk);
@@ -122,10 +134,10 @@ impl VM {
         let a = self.pop();
         let b = self.pop();
         match op_code {
-            chunk::OpCode::OpAdd => self.push(a + b),
-            chunk::OpCode::OpSubtract => self.push(a - b),
-            chunk::OpCode::OpMultiply => self.push(a * b),
-            chunk::OpCode::OpDivide => self.push(a / b),
+            chunk::OpCode::Add => self.push(a + b),
+            chunk::OpCode::Subtract => self.push(a - b),
+            chunk::OpCode::Multiply => self.push(a * b),
+            chunk::OpCode::Divide => self.push(a / b),
             _ => panic!("Unknown binary operator"),
         }
     }

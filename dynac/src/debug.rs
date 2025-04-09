@@ -24,15 +24,16 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
 
     let instruction = chunk::OpCode::from_byte(chunk.code[offset]);
     match instruction {
-        Some(chunk::OpCode::OpConstant) => {
+        Some(chunk::OpCode::Constant) => {
             constant_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
-        Some(chunk::OpCode::OpNegate) |
-        Some(chunk::OpCode::OpAdd) |
-        Some(chunk::OpCode::OpSubtract) |
-        Some(chunk::OpCode::OpMultiply) |
-        Some(chunk::OpCode::OpDivide) |
-        Some(chunk::OpCode::OpReturn) => {
+        Some(op) if matches!(op,
+            chunk::OpCode::Negate
+            | chunk::OpCode::Add
+            | chunk::OpCode::Subtract
+            | chunk::OpCode::Multiply
+            | chunk::OpCode::Divide
+            | chunk::OpCode::Return) => {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
         _ => {

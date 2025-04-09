@@ -5,72 +5,72 @@ use strum_macros::{EnumString, Display};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, Display)]
 pub enum TokenType {
     // Single-character tokens.
-    TokenLeftParen,
-    TokenRightParen,
-    TokenLeftBrace,
-    TokenRightBrace,
-    TokenComma,
-    TokenDot,
-    TokenMinus,
-    TokenPlus,
-    TokenSemicolon,
-    TokenSlash,
-    TokenStar,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    Comma,
+    Dot,
+    Minus,
+    Plus,
+    Semicolon,
+    Slash,
+    Star,
 
     // One or two character tokens.
-    TokenBang,
-    TokenBangEqual,
-    TokenEqual,
-    TokenEqualEqual,
-    TokenGreater,
-    TokenGreaterEqual,
-    TokenLess,
-    TokenLessEqual,
+    Bang,
+    BangEqual,
+    Equal,
+    EqualEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
 
     // Literals.
-    TokenIdentifier,
-    TokenString,
-    TokenNumber,
+    Identifier,
+    String,
+    Number,
 
     // Keywords.
-    TokenAnd,
-    TokenClass,
-    TokenElse,
-    TokenFalse,
-    TokenFor,
-    TokenFun,
-    TokenIf,
-    TokenNil,
-    TokenOr,
-    TokenPrint,
-    TokenReturn,
-    TokenSuper,
-    TokenThis,
-    TokenTrue,
-    TokenVar,
-    TokenWhile,
+    And,
+    Class,
+    Else,
+    False,
+    For,
+    Fun,
+    If,
+    Nil,
+    Or,
+    Print,
+    Return,
+    Super,
+    This,
+    True,
+    Var,
+    While,
 
-    TokenError,
-    TokenEof,
+    Error,
+    Eof,
 }
 
 static KEYWORDS: phf::Map<&'static str, TokenType> = phf::phf_map! {
-    "and" => TokenType::TokenAnd,
-    "class" => TokenType::TokenClass,
-    "else" => TokenType::TokenElse,
-    "if" => TokenType::TokenIf,
-    "nil" => TokenType::TokenNil,
-    "or" => TokenType::TokenOr,
-    "print" => TokenType::TokenPrint,
-    "return" => TokenType::TokenReturn,
-    "super" => TokenType::TokenSuper,
-    "var" => TokenType::TokenVar,
-    "while" => TokenType::TokenWhile,
-    "for" => TokenType::TokenFor,
-    "false" => TokenType::TokenFalse,
-    "fun" => TokenType::TokenFun,
-    "this" => TokenType::TokenThis,
-    "true" => TokenType::TokenTrue,
+    "and" => TokenType::And,
+    "class" => TokenType::Class,
+    "else" => TokenType::Else,
+    "if" => TokenType::If,
+    "nil" => TokenType::Nil,
+    "or" => TokenType::Or,
+    "print" => TokenType::Print,
+    "return" => TokenType::Return,
+    "super" => TokenType::Super,
+    "var" => TokenType::Var,
+    "while" => TokenType::While,
+    "for" => TokenType::For,
+    "false" => TokenType::False,
+    "fun" => TokenType::Fun,
+    "this" => TokenType::This,
+    "true" => TokenType::True,
 };
 
 #[derive(Debug)]
@@ -92,7 +92,7 @@ impl TrieNode {
 
 static TRIE_ROOT: OnceLock<TrieNode> = OnceLock::new();
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
     pub token_type: TokenType,
     pub value: &'a str,
@@ -137,7 +137,7 @@ impl<'a> Scanner<'a> {
         self.start = self.current;
 
         if self.is_end() {
-            return self.make_token(TokenType::TokenEof);
+            return self.make_token(TokenType::Eof);
         }
 
         let c = self.advance();
@@ -151,44 +151,44 @@ impl<'a> Scanner<'a> {
         }
 
         match c {
-            '(' => self.make_token(TokenType::TokenLeftParen),
-            ')' => self.make_token(TokenType::TokenRightParen),
-            '{' => self.make_token(TokenType::TokenLeftBrace),
-            '}' => self.make_token(TokenType::TokenRightBrace),
-            ';' => self.make_token(TokenType::TokenSemicolon),
-            ',' => self.make_token(TokenType::TokenComma),
-            '.' => self.make_token(TokenType::TokenDot),
-            '-' => self.make_token(TokenType::TokenMinus),
-            '+' => self.make_token(TokenType::TokenPlus),
-            '/' => self.make_token(TokenType::TokenSlash),
-            '*' => self.make_token(TokenType::TokenStar),
+            '(' => self.make_token(TokenType::LeftParen),
+            ')' => self.make_token(TokenType::RightParen),
+            '{' => self.make_token(TokenType::LeftBrace),
+            '}' => self.make_token(TokenType::RightBrace),
+            ';' => self.make_token(TokenType::Semicolon),
+            ',' => self.make_token(TokenType::Comma),
+            '.' => self.make_token(TokenType::Dot),
+            '-' => self.make_token(TokenType::Minus),
+            '+' => self.make_token(TokenType::Plus),
+            '/' => self.make_token(TokenType::Slash),
+            '*' => self.make_token(TokenType::Star),
             '"' => self.make_string_token(),
             '!' => {
                 if self.match_char('=') {
-                    self.make_token(TokenType::TokenBangEqual)
+                    self.make_token(TokenType::BangEqual)
                 } else {
-                    self.make_token(TokenType::TokenBang)
+                    self.make_token(TokenType::Bang)
                 }
             },
             '=' => {
                 if self.match_char('=') {
-                    self.make_token(TokenType::TokenEqualEqual)
+                    self.make_token(TokenType::EqualEqual)
                 } else {
-                    self.make_token(TokenType::TokenEqual)
+                    self.make_token(TokenType::Equal)
                 }
             },
             '<' => {
                 if self.match_char('=') {
-                    self.make_token(TokenType::TokenLessEqual)
+                    self.make_token(TokenType::LessEqual)
                 } else {
-                    self.make_token(TokenType::TokenLess)
+                    self.make_token(TokenType::Less)
                 }
             },
             '>' => {
                 if self.match_char('=') {
-                    self.make_token(TokenType::TokenGreaterEqual)
+                    self.make_token(TokenType::GreaterEqual)
                 } else {
-                    self.make_token(TokenType::TokenGreater)
+                    self.make_token(TokenType::Greater)
                 }
             },
             _ => self.error_token("Unexpected character."),
@@ -207,9 +207,9 @@ impl<'a> Scanner<'a> {
         //TokenType::TokenIdentifier
         let keyword = self.check_keyword();
         match keyword {
-            Some(TokenType::TokenError) => TokenType::TokenError,
+            Some(TokenType::Error) => TokenType::Error,
             Some(token_type) => token_type,
-            None => TokenType::TokenError,
+            None => TokenType::Error,
         }
     }
 
@@ -251,7 +251,7 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        self.make_token(TokenType::TokenNumber)
+        self.make_token(TokenType::Number)
     }
 
     fn make_string_token(&mut self) -> Token<'a> {
@@ -268,7 +268,7 @@ impl<'a> Scanner<'a> {
         }
 
         self.advance();
-        return self.make_token(TokenType::TokenString);
+        return self.make_token(TokenType::String);
     }
 
     fn skip_whitespace(&mut self) {
@@ -326,7 +326,7 @@ impl<'a> Scanner<'a> {
 
     fn error_token(&self, reason: &'static str) -> Token<'a> {
         Token {
-            token_type: TokenType::TokenError,
+            token_type: TokenType::Error,
             value: reason,
             line: self.line
         }
@@ -350,7 +350,7 @@ impl<'a> Scanner<'a> {
         let trie_root = TRIE_ROOT.get().expect("Trie not initialized");
         let mut current_node = trie_root;
 
-        let mut keyword = Some(TokenType::TokenIdentifier);
+        let mut keyword = Some(TokenType::Identifier);
         let substring = &self.source[self.start..self.current];
         for ch in substring.chars() {
             match current_node.children.get(&ch) {
@@ -360,7 +360,7 @@ impl<'a> Scanner<'a> {
                         keyword = current_node.token_type;
                     }
                 },
-                None => return Some(TokenType::TokenIdentifier),
+                None => return Some(TokenType::Identifier),
             }
         }
         if current_node.is_end {
@@ -389,34 +389,71 @@ mod tests {
     fn test_check_keyword() {
         let mut scanner = Scanner::new("this is for if fun  fun1 forfor %%dadf");
         let mut token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenThis);
+        assert!(token.token_type == TokenType::This);
         assert!(token.value == "this");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenIdentifier);
+        assert!(token.token_type == TokenType::Identifier);
         assert!(token.value == "is");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenFor);
+        assert!(token.token_type == TokenType::For);
         assert!(token.value == "for");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenIf);
+        assert!(token.token_type == TokenType::If);
         assert!(token.value == "if");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenFun);
+        assert!(token.token_type == TokenType::Fun);
         assert!(token.value == "fun");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenIdentifier);
+        assert!(token.token_type == TokenType::Identifier);
         assert!(token.value == "fun1");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenIdentifier);
+        assert!(token.token_type == TokenType::Identifier);
         assert!(token.value == "forfor");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::TokenError);
+        assert!(token.token_type == TokenType::Error);
+    }
+
+    #[test]
+    fn test_scan_token() {
+        let source = 
+        "var a = 1;
+        var b = \"this is a string\";
+        while(true) {
+            if (a == 1) {
+                print(a);
+            }
+
+            var c = a and 1 or 2;
+            for (var d = 1; d <= 5; ++d) {
+                a = a + 1;
+            }
+        }
+        fun test() {
+            var a = 1 + 2 * 3 / 4 - -5;
+            if a > 1 {
+                a = -a;
+            } else {
+                a = a - 1;
+            }
+            return;
+        }
+        ";
+        let mut scanner = Scanner::new(source);
+        while let token =  scanner.scan_token() {
+            println!("token is : {:?}", token);
+            if token.token_type == TokenType::Error {
+                assert!(false);
+            }
+            if token.token_type == TokenType::Eof {
+                break;
+            }
+        };
     }
 }
