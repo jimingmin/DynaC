@@ -5,6 +5,9 @@ use crate::value::{Value, ValueArray};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, Display)]
 pub enum OpCode {
     Constant,
+    Nil,
+    True,
+    False,
     Add,
     Subtract,
     Multiply,
@@ -18,6 +21,9 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     let mut arr = [None; 256];
 
     arr[OpCode::Constant as u8 as usize] = Some(OpCode::Constant);
+    arr[OpCode::Nil as u8 as usize] = Some(OpCode::Nil);
+    arr[OpCode::True as u8 as usize] = Some(OpCode::True);
+    arr[OpCode::False as u8 as usize] = Some(OpCode::False);
     arr[OpCode::Add as u8 as usize] = Some(OpCode::Add);
     arr[OpCode::Subtract as u8 as usize] = Some(OpCode::Subtract);
     arr[OpCode::Multiply as u8 as usize] = Some(OpCode::Multiply);

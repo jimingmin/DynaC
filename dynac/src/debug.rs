@@ -28,7 +28,10 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
             constant_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
         Some(op) if matches!(op,
-            chunk::OpCode::Negate
+            chunk::OpCode::Nil
+            | chunk::OpCode::True
+            | chunk::OpCode::False
+            | chunk::OpCode::Negate
             | chunk::OpCode::Add
             | chunk::OpCode::Subtract
             | chunk::OpCode::Multiply

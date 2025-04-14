@@ -1,4 +1,4 @@
-use crate::{chunk::{self, Chunk, OpCode}, scanner::{self, Scanner, Token, TokenType}, value::Value};
+use crate::{chunk::{self, Chunk, OpCode}, scanner::{self, Scanner, Token, TokenType}, value::*};
 use std::{any::Any, f64, io::Write, thread::current};
 
 pub struct Parser<'a> {
@@ -77,6 +77,9 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
     rules[TokenType::Slash as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Factor);
     rules[TokenType::Star as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Factor);
     rules[TokenType::Number as usize] = ParseRule::new(Some(|parser| parser.number()), None, Precedence::None);
+    rules[TokenType::False as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
+    rules[TokenType::True as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
+    rules[TokenType::Nil as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
 
     rules
 };
@@ -168,7 +171,7 @@ impl<'a> Parser<'a> {
             Ok(num) => num,
             Err(_) => 0.0,
         };
-        self.emit_constant(value);
+        self.emit_constant(make_numer_value(value));
     }
 
     fn grouping(&mut self) {
@@ -202,6 +205,16 @@ impl<'a> Parser<'a> {
             TokenType::Star => self.emit_byte(OpCode::Multiply.to_byte()),
             TokenType::Slash => self.emit_byte(OpCode::Divide.to_byte()),
             _ => unreachable!("Unexpected binary operator: {}", operator_type)
+        }
+    }
+
+    fn literal(&mut self) {
+        let operator_type = self.previous.token_type;
+        match operator_type {
+            TokenType::False => self.emit_byte(OpCode::False.to_byte()),
+            TokenType::True => self.emit_byte(OpCode::True.to_byte()),
+            TokenType::Nil => self.emit_byte(OpCode::Nil.to_byte()),
+            _ => unreachable!("Unexpected literal operator: {}", operator_type)
         }
     }
 
