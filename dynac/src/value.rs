@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ValueType {
     ValueBool,
     ValueNil,
@@ -34,6 +34,54 @@ impl Copy for Value {}
 impl Clone for Value {
     fn clone(&self) -> Self {
         *self
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        if self.value_type != other.value_type {
+            return false;
+        }
+
+        unsafe {
+            match self.value_type {
+                ValueType::ValueBool => self.value_as.boolean == other.value_as.boolean,
+                ValueType::ValueNumber => {
+                    (self.value_as.number - other.value_as.number).abs() < f64::EPSILON
+                }
+                ValueType::ValueNil => true,
+            }
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.value_type != other.value_type {
+            return None;
+        }
+
+        match self.value_type {
+            ValueType::ValueBool => None,
+            ValueType::ValueNil => None,
+            ValueType::ValueNumber => {
+                let a = unsafe {
+                    self.value_as.number
+                };
+
+                let b = unsafe {
+                    other.value_as.number
+                };
+
+                if (a - b).abs() < f64::EPSILON {
+                    Some(std::cmp::Ordering::Equal)
+                } else if a > b {
+                    Some(std::cmp::Ordering::Greater)
+                } else {
+                    Some(std::cmp::Ordering::Less)
+                }
+            }
+        }
     }
 }
 
@@ -126,6 +174,7 @@ pub fn print_value(value: Value) {
     }
 
 }
+
 // pub struct MyStruct {
 //     data: Value,
 // }

@@ -4,7 +4,7 @@ use std::{any::Any, f64, io::Write, thread::current};
 pub struct Parser<'a> {
     current: Token<'a>,
     previous: Token<'a>,
-    scanner: Box<Scanner<'a>>,
+    scanner: Option<Box<Scanner<'a>>>,
     has_error: bool,
     panic_mode: bool,
     chunk: Box<Chunk>,
@@ -80,16 +80,23 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
     rules[TokenType::False as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
     rules[TokenType::True as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
     rules[TokenType::Nil as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
+    rules[TokenType::Bang as usize] = ParseRule::new(Some(|parser| parser.unary()), None, Precedence::None);
+    rules[TokenType::BangEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Equality);
+    rules[TokenType::EqualEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Equality);
+    rules[TokenType::Greater as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
+    rules[TokenType::GreaterEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
+    rules[TokenType::Less as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
+    rules[TokenType::LessEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
 
     rules
 };
 
 impl<'a> Parser<'a> {
-    pub fn new(scanner: Box<Scanner<'a>>) -> Box<Parser<'a>> {
+    pub fn new() -> Box<Parser<'a>> {
         Box::new(Parser{
             current: Token{token_type: TokenType::Eof, value: "", line: 0},
             previous: Token{token_type: TokenType::Eof, value: "", line: 0},
-            scanner,
+            scanner: None,
             has_error: false,
             panic_mode: false,
             chunk: Chunk::new(),
@@ -97,11 +104,15 @@ impl<'a> Parser<'a> {
     }
 
     pub fn compile(&mut self, source: &'a str, chunk: Box<Chunk>) -> bool {
+        self.scanner = Some(Scanner::new(source));
+        self.current = Token{token_type: TokenType::Eof, value: "", line: 0};
+        self.previous = Token{token_type: TokenType::Eof, value: "", line: 0};
+
         self.chunk = chunk;
         self.advance();
 
-        // expression();
-        //consumer();
+        self.expression();
+        self.consume(TokenType::Eof, "Expect end of expression.");
         
         self.end_compiler();
         return !self.has_error;
@@ -110,12 +121,16 @@ impl<'a> Parser<'a> {
     fn advance(&mut self) {
         self.previous = self.current.clone();
         loop {
-            self.current = self.scanner.scan_token();
-            if self.current.token_type != TokenType::Error {
-                break;
+            if let Some(scanner) = &mut self.scanner {
+                self.current = scanner.scan_token();
+                if self.current.token_type != TokenType::Error {
+                    break;
+                }
+    
+                self.error_at_current(self.current.value);
+            } else {
+                panic!("Compiler was not initialized correctly.");
             }
-
-            self.error_at_current(self.current.value);
         }
     }
 
@@ -189,8 +204,9 @@ impl<'a> Parser<'a> {
         self.parse_precedence(Precedence::Unary);
 
         match operator_type {
+            TokenType::Bang => self.emit_byte(OpCode::Not.to_byte()),
             TokenType::Minus => self.emit_byte(OpCode::Negate.to_byte()),
-            _ => unreachable!("Expect '-' operator."),
+            _ => unreachable!("Expect unary operator."),
         }
     }
 
@@ -200,6 +216,12 @@ impl<'a> Parser<'a> {
         self.parse_precedence((rule.precedence as u8 + 1).into());
 
         match operator_type {
+            TokenType::BangEqual => self.emit_bytes(OpCode::Equal.to_byte(), OpCode::Not.to_byte()),
+            TokenType::EqualEqual => self.emit_byte(OpCode::Equal.to_byte()),
+            TokenType::Greater => self.emit_byte(OpCode::Greater.to_byte()),
+            TokenType::GreaterEqual => self.emit_bytes(OpCode::Less.to_byte(), OpCode::Not.to_byte()),
+            TokenType::Less => self.emit_byte(OpCode::Less.to_byte()),
+            TokenType::LessEqual => self.emit_bytes(OpCode::Greater.to_byte(), OpCode::Not.to_byte()),
             TokenType::Plus => self.emit_byte(OpCode::Add.to_byte()),
             TokenType::Minus => self.emit_byte(OpCode::Subtract.to_byte()),
             TokenType::Star => self.emit_byte(OpCode::Multiply.to_byte()),
@@ -284,4 +306,64 @@ mod debug_feature {
     use super::*;
 
     pub fn disassemble_chunk(parser: &Parser) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::chunk::Chunk;
+
+    use super::*;
+
+    impl<'a> Parser<'a> {
+        pub fn chunk(&self) -> &Box<Chunk> {
+            &self.chunk
+        }
+    }
+
+    #[test]
+    fn test_compile() {
+        let chunk = Chunk::new();
+        let mut parser = Parser::new();
+        let result = parser.compile("!(5 - 4 > 3 * 2 == !nil)", chunk);
+        assert!(result);
+
+        let chunk = parser.chunk();
+
+// 00000000 00000001 Constant            0 '5'
+// 00000002        | Constant            1 '4'
+// 00000004        | Subtract
+// 00000005        | Constant            2 '3'
+// 00000007        | Constant            3 '2'
+// 00000009        | Multiply
+// 00000010        | Greater
+// 00000011        | Nil
+// 00000012        | Not
+// 00000013        | Equal
+// 00000014        | Not
+// 00000015        | Return
+        assert!(chunk.constants[0] == Value {
+            value_type: ValueType::ValueNumber,
+            value_as: ValueUnion{number: 5.0}});
+
+        assert!(chunk.constants[1] == Value {
+            value_type: ValueType::ValueNumber,
+            value_as: ValueUnion{number: 4.0}});
+
+        assert!(chunk.code[0] == OpCode::Constant.to_byte());
+        assert!(chunk.code[1] == 0); // constant index
+        assert!(chunk.code[2] == OpCode::Constant.to_byte());
+        assert!(chunk.code[3] == 1); // constant index
+        assert!(chunk.code[4] == OpCode::Subtract.to_byte());
+        assert!(chunk.code[5] == OpCode::Constant.to_byte());
+        assert!(chunk.code[6] == 2); // constant index
+        assert!(chunk.code[7] == OpCode::Constant.to_byte());
+        assert!(chunk.code[8] == 3); // constant index
+        assert!(chunk.code[9] == OpCode::Multiply.to_byte());
+        assert!(chunk.code[10] == OpCode::Greater.to_byte());
+        assert!(chunk.code[11] == OpCode::Nil.to_byte());
+        assert!(chunk.code[12] == OpCode::Not.to_byte());
+        assert!(chunk.code[13] == OpCode::Equal.to_byte());
+        assert!(chunk.code[14] == OpCode::Not.to_byte());
+        assert!(chunk.code[15] == OpCode::Return.to_byte());
+    }
 }

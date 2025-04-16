@@ -8,10 +8,14 @@ pub enum OpCode {
     Nil,
     True,
     False,
+    Equal,
+    Greater,
+    Less,
     Add,
     Subtract,
     Multiply,
     Divide,
+    Not,
     Negate,
     Return,
     //Unknown(u8),
@@ -24,10 +28,14 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::Nil as u8 as usize] = Some(OpCode::Nil);
     arr[OpCode::True as u8 as usize] = Some(OpCode::True);
     arr[OpCode::False as u8 as usize] = Some(OpCode::False);
+    arr[OpCode::Equal as u8 as usize] = Some(OpCode::Equal);
+    arr[OpCode::Greater as u8 as usize] = Some(OpCode::Greater);
+    arr[OpCode::Less as u8 as usize] = Some(OpCode::Less);
     arr[OpCode::Add as u8 as usize] = Some(OpCode::Add);
     arr[OpCode::Subtract as u8 as usize] = Some(OpCode::Subtract);
     arr[OpCode::Multiply as u8 as usize] = Some(OpCode::Multiply);
     arr[OpCode::Divide as u8 as usize] = Some(OpCode::Divide);
+    arr[OpCode::Not as u8 as usize] = Some(OpCode::Not);
     arr[OpCode::Negate as u8 as usize] = Some(OpCode::Negate);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr

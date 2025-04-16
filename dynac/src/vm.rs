@@ -1,4 +1,4 @@
-use crate::{chunk::{self, OpCode}, debug, value::{as_number, is_number, make_bool_value, make_nil_value, make_numer_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{chunk::{self, OpCode}, debug, value::{as_bool, as_number, is_bool, is_nil, is_number, make_bool_value, make_nil_value, make_numer_value, print_value, Value, ValueType, ValueUnion}};
 
 const MAX_STACK_SIZE: usize = 256;
 
@@ -89,6 +89,10 @@ impl VM {
         }
     }
 
+    fn is_falsey(value: &Value) -> bool {
+        is_nil(value) || (is_bool(value) && !as_bool(value))
+    }
+
     fn run(&mut self) -> Result<InterpretResult, &'static str> {
         loop {
             debug_feature::disassemble_instruction(&self);
@@ -112,6 +116,25 @@ impl VM {
                 }
                 Some(chunk::OpCode::False) => {
                     self.push(make_bool_value(false));
+                }
+                Some(chunk::OpCode::Equal) => {
+                    let b = self.pop();
+                    let a = self.pop();
+                    self.push(make_bool_value(a == b));
+                }
+                Some(chunk::OpCode::Greater) => {
+                    let result = self.binary_op(chunk::OpCode::Greater);
+                    match result {
+                        Err(_) => return result,
+                        _ => (),
+                    }
+                }
+                Some(chunk::OpCode::Less) => {
+                    let result = self.binary_op(chunk::OpCode::Less);
+                    match result {
+                        Err(_) => return result,
+                        _ => (),
+                    }
                 }
                 Some(chunk::OpCode::Add) => {
                     let result = self.binary_op(chunk::OpCode::Add);
@@ -140,6 +163,10 @@ impl VM {
                         Err(_) => return result,
                         _ => (),
                     }
+                }
+                Some(chunk::OpCode::Not) => {
+                    let byte = self.pop();
+                    self.push(make_bool_value(Self::is_falsey(&byte)));
                 }
                 Some(chunk::OpCode::Negate) => {
                     if let Some(value) = self.peek_steps(0) {
@@ -212,14 +239,27 @@ impl VM {
             }
             let value_b = as_number(&self.pop());
             let value_a = as_number(&self.pop());
-            let result = match op_code {
-                chunk::OpCode::Add => value_a + value_b,
-                chunk::OpCode::Subtract => value_a - value_b,
-                chunk::OpCode::Multiply => value_a * value_b,
-                chunk::OpCode::Divide => value_a / value_b,
+            match op_code {
+                chunk::OpCode::Greater => {
+                    self.push(make_bool_value(value_a > value_b))
+                }
+                chunk::OpCode::Less => {
+                    self.push(make_bool_value(value_a < value_b))
+                }
+                chunk::OpCode::Add => {
+                    self.push(make_numer_value(value_a + value_b))
+                }
+                chunk::OpCode::Subtract => {
+                    self.push(make_numer_value(value_a - value_b))
+                }
+                chunk::OpCode::Multiply => {
+                    self.push(make_numer_value(value_a * value_b))
+                }
+                chunk::OpCode::Divide => {
+                    self.push(make_numer_value(value_a / value_b))
+                }
                 _ => return Err("Unknown binary operator"),
             };
-            self.push(make_numer_value(result));
 
             Ok(InterpretResult::InterpretOk)
         }

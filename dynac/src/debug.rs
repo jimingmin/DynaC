@@ -31,11 +31,15 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
             chunk::OpCode::Nil
             | chunk::OpCode::True
             | chunk::OpCode::False
+            | chunk::OpCode::Equal
+            | chunk::OpCode::Greater
+            | chunk::OpCode::Less
             | chunk::OpCode::Negate
             | chunk::OpCode::Add
             | chunk::OpCode::Subtract
             | chunk::OpCode::Multiply
             | chunk::OpCode::Divide
+            | chunk::OpCode::Not
             | chunk::OpCode::Return) => {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
