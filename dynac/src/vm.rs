@@ -1,4 +1,4 @@
-use crate::{chunk::{self, OpCode}, debug, value::{as_bool, as_number, is_bool, is_nil, is_number, make_bool_value, make_nil_value, make_numer_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, value::{as_bool, as_number, is_bool, is_nil, is_number, make_bool_value, make_nil_value, make_numer_value, print_value, Value, ValueType, ValueUnion}};
 
 const MAX_STACK_SIZE: usize = 256;
 
@@ -9,6 +9,7 @@ pub struct VM {
     pub stack_top_pos: usize,
 }
 
+#[derive(PartialEq)]
 pub enum InterpretResult {
     InterpretOk,
     InterpretCompileError,
@@ -26,26 +27,12 @@ impl VM {
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
         self.compile(source)
-        // if self.compile(source) {
-        //     return InterpretResult::InterpretCompileError;
-        // }
-        
-        // InterpretResult::InterpretOk
     }
 
-    // pub fn interpret(&mut self, chunk: Box<chunk::Chunk>) -> InterpretResult {
-    //     self.chunk = chunk;
-
-    //     match self.run() {
-    //         Ok(result) => result,
-    //         Err(e) => {
-    //             println!("Error during interpretation: {}", e);
-    //             return InterpretResult::InterpretRuntimeError;
-    //         },
-    //     }
-    // }
-
     fn compile(&mut self, source: &str) -> InterpretResult {
+        let mut parser = Parser::new();
+        parser.compile(source, &mut *self.chunk);
+
         match self.run() {
             Ok(result) => result,
             Err(e) => {
@@ -270,6 +257,10 @@ mod debug_feature {
     use super::*;
 
     pub fn disassemble_instruction(vm: &VM) {
+        if vm.stack_top_pos < 1 {
+            return;
+        }
+
         print!("{: >17}", "");
         for slot in &vm.stack[0..vm.stack_top_pos] {
             print!(" [ ");
@@ -286,4 +277,18 @@ mod debug_feature {
     use super::*;
 
     pub fn disassemble_instruction(vm: &VM) {}
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::vm::InterpretResult;
+
+    use super::VM;
+
+    #[test]
+    fn test_vm() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("!(5 - 4 > 3 * 2 == !nil)") == InterpretResult::InterpretOk);
+    }
 }

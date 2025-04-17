@@ -7,7 +7,7 @@ pub struct Parser<'a> {
     scanner: Option<Box<Scanner<'a>>>,
     has_error: bool,
     panic_mode: bool,
-    chunk: Box<Chunk>,
+    chunk: Option<&'a mut Chunk>,
 }
 
 #[repr(u8)]
@@ -99,16 +99,16 @@ impl<'a> Parser<'a> {
             scanner: None,
             has_error: false,
             panic_mode: false,
-            chunk: Chunk::new(),
+            chunk: None,
         })
     }
 
-    pub fn compile(&mut self, source: &'a str, chunk: Box<Chunk>) -> bool {
+    pub fn compile(&mut self, source: &'a str, chunk: &'a mut Chunk) -> bool {
         self.scanner = Some(Scanner::new(source));
         self.current = Token{token_type: TokenType::Eof, value: "", line: 0};
         self.previous = Token{token_type: TokenType::Eof, value: "", line: 0};
 
-        self.chunk = chunk;
+        self.chunk = Some(chunk);
         self.advance();
 
         self.expression();
@@ -178,7 +178,7 @@ impl<'a> Parser<'a> {
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        &mut self.chunk
+        self.chunk.as_mut().expect("Chunk is None")
     }
 
     fn number(&mut self) {
@@ -315,16 +315,16 @@ mod tests {
     use super::*;
 
     impl<'a> Parser<'a> {
-        pub fn chunk(&self) -> &Box<Chunk> {
-            &self.chunk
+        pub fn chunk(&mut self) -> &mut Chunk {
+            self.chunk.as_mut().expect("Chunk is None")
         }
     }
 
     #[test]
     fn test_compile() {
-        let chunk = Chunk::new();
+        let mut chunk = Chunk::new();
         let mut parser = Parser::new();
-        let result = parser.compile("!(5 - 4 > 3 * 2 == !nil)", chunk);
+        let result = parser.compile("!(5 - 4 > 3 * 2 == !nil)", &mut *chunk);
         assert!(result);
 
         let chunk = parser.chunk();
