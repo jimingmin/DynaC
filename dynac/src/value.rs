@@ -1,8 +1,11 @@
+use crate::object::{Object, ObjectString, ObjectType};
+
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ValueType {
     ValueBool,
     ValueNil,
     ValueNumber,
+    ValueObject,
 }
 
 impl Copy for ValueType {}
@@ -15,6 +18,7 @@ impl Clone for ValueType {
 pub union ValueUnion {
     pub boolean: bool,
     pub number: f64,
+    pub object: *mut Object,
 }
 
 impl Copy for ValueUnion {}
@@ -49,6 +53,9 @@ impl PartialEq for Value {
                 ValueType::ValueNumber => {
                     (self.value_as.number - other.value_as.number).abs() < f64::EPSILON
                 }
+                ValueType::ValueObject => {
+                    self.value_as.object == other.value_as.object
+                }
                 ValueType::ValueNil => true,
             }
         }
@@ -64,6 +71,23 @@ impl PartialOrd for Value {
         match self.value_type {
             ValueType::ValueBool => None,
             ValueType::ValueNil => None,
+            ValueType::ValueObject => {
+                let a = unsafe {
+                    self.value_as.object
+                };
+
+                let b = unsafe {
+                    other.value_as.object
+                };
+
+                if a == b {
+                    Some(std::cmp::Ordering::Equal)
+                } else if a > b {
+                    Some(std::cmp::Ordering::Greater)
+                } else {
+                    Some(std::cmp::Ordering::Less)
+                }
+            }
             ValueType::ValueNumber => {
                 let a = unsafe {
                     self.value_as.number
@@ -101,6 +125,18 @@ pub fn is_number(value: &Value) -> bool {
 }
 
 #[inline(always)]
+pub fn is_object(value: &Value) -> bool {
+    value.value_type == ValueType::ValueObject
+}
+
+#[inline(always)]
+pub fn is_string(value: &Value) -> bool {
+    unsafe {
+        is_object(value) && (*as_object(value)).obj_type == ObjectType::ObjString
+    }
+}
+
+#[inline(always)]
 pub fn as_bool(value: &Value) -> bool {
     if value.value_type == ValueType::ValueBool {
         return unsafe {
@@ -115,6 +151,26 @@ pub fn as_number(value: &Value) -> f64 {
     if value.value_type == ValueType::ValueNumber {
         return unsafe {
             value.value_as.number
+        };   
+    }
+    panic!("Unexpected value type. {:?}", value.value_type);
+}
+
+#[inline(always)]
+pub fn as_object(value: &Value) -> *const Object {
+    if value.value_type == ValueType::ValueObject {
+        return unsafe {
+            value.value_as.object
+        };   
+    }
+    panic!("Unexpected value type. {:?}", value.value_type);
+}
+
+#[inline(always)]
+pub fn as_mutable_object(value: &Value) -> *mut Object {
+    if value.value_type == ValueType::ValueObject {
+        return unsafe {
+            value.value_as.object
         };   
     }
     panic!("Unexpected value type. {:?}", value.value_type);
@@ -143,6 +199,15 @@ pub fn make_numer_value(value: f64) -> Value {
         value_as: ValueUnion{number: value},
     }
 }
+
+#[inline(always)]
+pub fn make_string_value(value: &str) -> Value {
+    Value {
+        value_type: ValueType::ValueNumber,
+        value_as: ValueUnion{object: Box::into_raw(ObjectString::new(value)) as *mut Object},
+    }
+}
+
 
 pub type ValueArray = Vec<Value>;
 

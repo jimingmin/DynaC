@@ -8,6 +8,7 @@ mod value;
 mod vm;
 mod scanner;
 mod compiler;
+mod object;
 
 fn repl() {
     let mut vm = vm::VM::new();

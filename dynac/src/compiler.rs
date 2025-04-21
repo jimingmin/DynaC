@@ -77,6 +77,7 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
     rules[TokenType::Slash as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Factor);
     rules[TokenType::Star as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Factor);
     rules[TokenType::Number as usize] = ParseRule::new(Some(|parser| parser.number()), None, Precedence::None);
+    rules[TokenType::String as usize] = ParseRule::new(Some(|parser| parser.string()), None, Precedence::None);
     rules[TokenType::False as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
     rules[TokenType::True as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
     rules[TokenType::Nil as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
@@ -187,6 +188,14 @@ impl<'a> Parser<'a> {
             Err(_) => 0.0,
         };
         self.emit_constant(make_numer_value(value));
+    }
+
+    fn string(&mut self) {
+        self.emit_constant(
+            make_string_value(
+                &self.previous.value[1..self.previous.value.len() - 2]  // The + 1 and - 2 parts trim the leading and trailing quotation marks.
+            )
+        );
     }
 
     fn grouping(&mut self) {
