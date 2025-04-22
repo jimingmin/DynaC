@@ -1,4 +1,4 @@
-use crate::object::{Object, ObjectString, ObjectType};
+use crate::object::{self, Object, ObjectString, ObjectType};
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ValueType {
@@ -203,7 +203,7 @@ pub fn make_numer_value(value: f64) -> Value {
 #[inline(always)]
 pub fn make_string_value(value: &str) -> Value {
     Value {
-        value_type: ValueType::ValueNumber,
+        value_type: ValueType::ValueObject,
         value_as: ValueUnion{object: Box::into_raw(ObjectString::new(value)) as *mut Object},
     }
 }
@@ -211,7 +211,7 @@ pub fn make_string_value(value: &str) -> Value {
 
 pub type ValueArray = Vec<Value>;
 
-pub fn print_value(value: Value) {
+pub fn print_value(value: &Value) {
     match value.value_type {
         ValueType::ValueNumber => {
             let real_value = as_number(&value);
@@ -235,11 +235,26 @@ pub fn print_value(value: Value) {
         ValueType::ValueNil => {
             print!("nil");
         }
+        ValueType::ValueObject => {
+            print_object(value);
+        }
         _ => unreachable!("Unexpected value type: {:?}", value.value_type),
     }
 
 }
 
+fn print_object(value: &Value) {
+    unsafe {
+        let object_ptr = as_object(value);
+        match (*object_ptr).obj_type {
+            ObjectType::ObjString => {
+                let object_string = &*(object_ptr as *const ObjectString);
+                print!("{}", object_string.content);
+            }
+        }
+    }
+
+}
 // pub struct MyStruct {
 //     data: Value,
 // }

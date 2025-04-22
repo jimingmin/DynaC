@@ -54,7 +54,7 @@ fn constant_instruction(name: &str, chunk: &chunk::Chunk, offset: usize) -> usiz
     let constant = chunk.code[offset + 1];
     print!("{:<16} {:>4} '", name, constant);
     let constant_index = constant as usize;
-    value::print_value(chunk.constants[constant_index]);
+    value::print_value(&chunk.constants[constant_index]);
     println!("'");
     offset + 2
 }

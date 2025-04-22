@@ -193,7 +193,7 @@ impl<'a> Parser<'a> {
     fn string(&mut self) {
         self.emit_constant(
             make_string_value(
-                &self.previous.value[1..self.previous.value.len() - 2]  // The + 1 and - 2 parts trim the leading and trailing quotation marks.
+                &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
             )
         );
     }

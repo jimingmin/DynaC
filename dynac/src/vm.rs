@@ -1,4 +1,4 @@
-use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, value::{as_bool, as_number, is_bool, is_nil, is_number, make_bool_value, make_nil_value, make_numer_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, object::ObjectString, value::{as_bool, as_number, as_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
 
 const MAX_STACK_SIZE: usize = 256;
 
@@ -124,11 +124,37 @@ impl VM {
                     }
                 }
                 Some(chunk::OpCode::Add) => {
-                    let result = self.binary_op(chunk::OpCode::Add);
-                    match result {
-                        Err(_) => return result,
-                        _ => (),
+                    if let Some(value_b) = self.peek_steps(0) {
+                        if let Some(value_a) = self.peek_steps(1) {
+                            if is_string(&value_a) && is_string(&value_b) {
+                                unsafe {
+                                    let string_b = &*(as_object(&self.pop()) as *const ObjectString);
+                                    let string_a = &*(as_object(&self.pop()) as *const ObjectString);
+                                    let mut combination = String::with_capacity(string_a.content.len() + string_b.content.len());
+                                    combination.push_str(string_a.content.as_str());
+                                    combination.push_str(string_b.content.as_str());
+                                    let combinated_value = make_string_value(combination.as_str());
+                                    self.push(combinated_value);
+                                }
+                            } else if is_number(&value_a) && is_number(&value_b) {
+                                let number_a = as_number(&value_a);
+                                let number_b = as_number(&value_b);
+                                self.push(make_numer_value(number_a + number_b));
+                            } else {
+                                return Err("Operands must be two numbers or two strings.");
+                            }
+                        } else {
+                            return Err("There is a lack of second operand in the Add Operation.");
+                        }
+                    } else {
+                        return Err("There is a lack of operands in the Add Operation.");
                     }
+
+                    // let result = self.binary_op(chunk::OpCode::Add);
+                    // match result {
+                    //     Err(_) => return result,
+                    //     _ => (),
+                    // }
                 }
                 Some(chunk::OpCode::Subtract) => {
                     let result = self.binary_op(chunk::OpCode::Subtract);
@@ -166,7 +192,7 @@ impl VM {
                     self.push(value);
                 }
                 Some(chunk::OpCode::Return) => {
-                    print_value(self.pop());
+                    print_value(&self.pop());
                     println!();
                     return Ok(InterpretResult::InterpretOk);
                 }
@@ -264,7 +290,7 @@ mod debug_feature {
         print!("{: >17}", "");
         for slot in &vm.stack[0..vm.stack_top_pos] {
             print!(" [ ");
-            print_value(*slot);
+            print_value(slot);
             print!(" ]");
         }
         println!();
@@ -287,8 +313,14 @@ mod tests {
     use super::VM;
 
     #[test]
-    fn test_vm() {
+    fn test_comparison_expression() {
         let mut vm = VM::new();
         assert!(vm.interpret("!(5 - 4 > 3 * 2 == !nil)") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_string_concatenate() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("\"st\" + \"ri\" + \"ng\"") == InterpretResult::InterpretOk);
     }
 }
