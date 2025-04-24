@@ -1,12 +1,14 @@
-use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, object::ObjectString, value::{as_bool, as_number, as_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, object::{Object, ObjectString}, value::{as_bool, as_number, as_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::object_manager::ObjectManager;
 
 const MAX_STACK_SIZE: usize = 256;
 
 pub struct VM {
-    pub chunk: Box<chunk::Chunk>,
-    pub ip: usize,
-    pub stack: [Value; MAX_STACK_SIZE],
-    pub stack_top_pos: usize,
+    chunk: Box<chunk::Chunk>,
+    ip: usize,
+    stack: [Value; MAX_STACK_SIZE],
+    stack_top_pos: usize,
+    object_manager: Box<ObjectManager>,
 }
 
 #[derive(PartialEq)]
@@ -16,13 +18,33 @@ pub enum InterpretResult {
     InterpretRuntimeError,
 }
 
+impl Drop for VM {
+    fn drop(&mut self) {
+        loop {
+            let object = self.object_manager.pop_object();
+            if object.is_null() {
+                break;
+            }
+
+            unsafe {
+                let _ = Box::from_raw(object);
+            }
+        }
+    }
+}
+
 impl VM {
     pub fn new() -> Box<VM> {
         let chunk = chunk::Chunk::new();
-        Box::new(VM{chunk, ip: 0, stack:[Value {
-            value_type: ValueType::ValueNil,
-            value_as: ValueUnion{number: 0.0},
-        }; MAX_STACK_SIZE], stack_top_pos: 0})
+        Box::new(VM {
+                chunk, ip: 0,
+                stack: [Value {
+                    value_type: ValueType::ValueNil,
+                    value_as: ValueUnion{number: 0.0},
+                }; MAX_STACK_SIZE],
+                stack_top_pos: 0,
+                object_manager: ObjectManager::new(),
+                })
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
@@ -30,8 +52,12 @@ impl VM {
     }
 
     fn compile(&mut self, source: &str) -> InterpretResult {
-        let mut parser = Parser::new();
-        parser.compile(source, &mut *self.chunk);
+        let mut parser = Parser::new(&mut self.object_manager);
+        let result = parser.compile(source, &mut *self.chunk);
+        if !result {
+            println!("Compile Error!");
+            return InterpretResult::InterpretCompileError;
+        }
 
         match self.run() {
             Ok(result) => result,
@@ -144,10 +170,10 @@ impl VM {
                                 return Err("Operands must be two numbers or two strings.");
                             }
                         } else {
-                            return Err("There is a lack of second operand in the Add Operation.");
+                            return Err("There is a lack of second operand in the '+' Operation.");
                         }
                     } else {
-                        return Err("There is a lack of operands in the Add Operation.");
+                        return Err("There is a lack of operands in the '+' Operation.");
                     }
 
                     // let result = self.binary_op(chunk::OpCode::Add);

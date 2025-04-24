@@ -1,4 +1,4 @@
-use crate::{chunk::{self, Chunk, OpCode}, scanner::{self, Scanner, Token, TokenType}, value::*};
+use crate::{chunk::{self, Chunk, OpCode}, object_manager::{self, ObjectManager}, scanner::{self, Scanner, Token, TokenType}, value::{self, *}};
 use std::{any::Any, f64, io::Write, thread::current};
 
 pub struct Parser<'a> {
@@ -8,6 +8,7 @@ pub struct Parser<'a> {
     has_error: bool,
     panic_mode: bool,
     chunk: Option<&'a mut Chunk>,
+    object_manager: &'a mut ObjectManager,
 }
 
 #[repr(u8)]
@@ -93,8 +94,9 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
 };
 
 impl<'a> Parser<'a> {
-    pub fn new() -> Box<Parser<'a>> {
+    pub fn new(gc: &'a mut ObjectManager) -> Box<Parser<'a>> {
         Box::new(Parser{
+            object_manager: gc,
             current: Token{token_type: TokenType::Eof, value: "", line: 0},
             previous: Token{token_type: TokenType::Eof, value: "", line: 0},
             scanner: None,
@@ -191,11 +193,11 @@ impl<'a> Parser<'a> {
     }
 
     fn string(&mut self) {
-        self.emit_constant(
-            make_string_value(
-                &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
-            )
+        let mut value = make_string_value(
+            &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
         );
+        self.object_manager.push_object_value(&mut value);
+        self.emit_constant(value);
     }
 
     fn grouping(&mut self) {
@@ -332,7 +334,8 @@ mod tests {
     #[test]
     fn test_compile() {
         let mut chunk = Chunk::new();
-        let mut parser = Parser::new();
+        let mut gc = ObjectManager::new();
+        let mut parser = Parser::new(&mut *gc);
         let result = parser.compile("!(5 - 4 > 3 * 2 == !nil)", &mut *chunk);
         assert!(result);
 

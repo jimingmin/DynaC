@@ -208,7 +208,6 @@ pub fn make_string_value(value: &str) -> Value {
     }
 }
 
-
 pub type ValueArray = Vec<Value>;
 
 pub fn print_value(value: &Value) {
