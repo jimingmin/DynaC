@@ -19,8 +19,8 @@ impl ObjectManager {
             unsafe {
                 (*object).next = self.objects;
             }
-            self.size += 1;
         }
+        self.size += 1;
         self.objects = object;
     }
 
@@ -37,7 +37,11 @@ impl ObjectManager {
 
         let object = self.objects;
         unsafe {
-            self.objects = (*self.objects).next;
+            if !(*object).next.is_null() {
+                self.objects = (*self.objects).next;
+            } else {
+                self.objects = std::ptr::null_mut();
+            }
         }
         self.size -= 1;
         object
