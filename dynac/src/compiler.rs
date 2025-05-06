@@ -1,4 +1,4 @@
-use crate::{chunk::{self, Chunk, OpCode}, object_manager::{self, ObjectManager}, scanner::{self, Scanner, Token, TokenType}, value::{self, *}};
+use crate::{chunk::{self, Chunk, OpCode}, object::Object, object_manager::{self, ObjectManager}, scanner::{self, Scanner, Token, TokenType}, table::Table, value::{self, *}};
 use std::{any::Any, f64, io::Write, thread::current};
 
 pub struct Parser<'a> {
@@ -9,6 +9,7 @@ pub struct Parser<'a> {
     panic_mode: bool,
     chunk: Option<&'a mut Chunk>,
     object_manager: &'a mut ObjectManager,
+    intern_strings: &'a mut Table,
 }
 
 #[repr(u8)]
@@ -94,15 +95,16 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
 };
 
 impl<'a> Parser<'a> {
-    pub fn new(gc: &'a mut ObjectManager) -> Box<Parser<'a>> {
+    pub fn new(object_manager: &'a mut ObjectManager, intern_strings: &'a mut Table) -> Box<Parser<'a>> {
         Box::new(Parser{
-            object_manager: gc,
             current: Token{token_type: TokenType::Eof, value: "", line: 0},
             previous: Token{token_type: TokenType::Eof, value: "", line: 0},
             scanner: None,
             has_error: false,
             panic_mode: false,
             chunk: None,
+            object_manager,
+            intern_strings,
         })
     }
 
@@ -193,10 +195,26 @@ impl<'a> Parser<'a> {
     }
 
     fn string(&mut self) {
+        // let content = &self.previous.value[1..self.previous.value.len() - 1];  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
+        // let result = self.intern_strings.find(content);
+        // match result {
+        //     Some(string) => {
+        //         self.emit_constant(Value {
+        //             value_type: ValueType::ValueObject,
+        //             value_as: ValueUnion{object: string as *mut Object},
+        //         });
+        //     },
+        //     None => {
+        //         let mut value = make_string_value(&mut self.intern_strings, content);
+        //         self.object_manager.push_object_value(&mut value);
+        //         self.emit_constant(value);
+        //     }
+        // }
         let mut value = make_string_value(
+            &mut self.object_manager,
+            &mut self.intern_strings,
             &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
         );
-        self.object_manager.push_object_value(&mut value);
         self.emit_constant(value);
     }
 
@@ -334,8 +352,9 @@ mod tests {
     #[test]
     fn test_compile() {
         let mut chunk = Chunk::new();
-        let mut gc = ObjectManager::new();
-        let mut parser = Parser::new(&mut *gc);
+        let mut object_manager = ObjectManager::new();
+        let mut intern_strings = Table::new();
+        let mut parser = Parser::new(&mut *object_manager, &mut *intern_strings);
         let result = parser.compile("!(5 - 4 > 3 * 2 == !nil)", &mut *chunk);
         assert!(result);
 
@@ -377,5 +396,22 @@ mod tests {
         assert!(chunk.code[13] == OpCode::Equal.to_byte());
         assert!(chunk.code[14] == OpCode::Not.to_byte());
         assert!(chunk.code[15] == OpCode::Return.to_byte());
+    }
+
+    #[test]
+    fn test_intern_strings() {
+        let mut object_manager = ObjectManager::new();
+        let mut intern_strings = Table::new();
+        let mut parser = Parser::new(&mut *object_manager, &mut *intern_strings);
+        
+        let mut chunk1 = Chunk::new();
+        let result = parser.compile("\"this is a test string\"", &mut *chunk1);
+        assert!(result);
+
+        let mut chunk2 = Chunk::new();
+        let result = parser.compile("\"this is a test string\"", &mut *chunk2);
+        assert!(result);
+
+        assert!(intern_strings.len() == 1);
     }
 }

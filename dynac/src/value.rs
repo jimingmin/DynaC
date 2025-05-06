@@ -1,4 +1,4 @@
-use crate::object::{self, Object, ObjectString, ObjectType};
+use crate::{object::{self, Object, ObjectString, ObjectType}, object_manager::ObjectManager, table::Table};
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ValueType {
@@ -201,10 +201,21 @@ pub fn make_numer_value(value: f64) -> Value {
 }
 
 #[inline(always)]
-pub fn make_string_value(value: &str) -> Value {
-    Value {
-        value_type: ValueType::ValueObject,
-        value_as: ValueUnion{object: Box::into_raw(ObjectString::new(value)) as *mut Object},
+pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mut Table, value: &str) -> Value {
+    if let Some(string) = intern_strings.find(value) {
+        Value {
+            value_type: ValueType::ValueObject,
+            value_as: ValueUnion{object: string as *mut Object},
+        }
+    } else {
+        let object_string = Box::into_raw(ObjectString::new(value));
+        intern_strings.insert(object_string);
+        object_manager.push_object(object_string as *mut Object);
+
+        Value {
+            value_type: ValueType::ValueObject,
+            value_as: ValueUnion{object: object_string as *mut Object},
+        }
     }
 }
 

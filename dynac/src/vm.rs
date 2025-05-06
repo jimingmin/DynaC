@@ -1,4 +1,6 @@
-use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, object::{Object, ObjectString}, value::{as_bool, as_number, as_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use std::{cell::RefCell, rc::Rc};
+
+use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, object::{Object, ObjectString}, table::Table, value::{as_bool, as_number, as_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
 use crate::object_manager::ObjectManager;
 
 const MAX_STACK_SIZE: usize = 256;
@@ -9,6 +11,7 @@ pub struct VM {
     stack: [Value; MAX_STACK_SIZE],
     stack_top_pos: usize,
     object_manager: Box<ObjectManager>,
+    intern_strings: Box<Table>,
 }
 
 #[derive(PartialEq)]
@@ -44,6 +47,7 @@ impl VM {
                 }; MAX_STACK_SIZE],
                 stack_top_pos: 0,
                 object_manager: ObjectManager::new(),
+                intern_strings: Table::new(),
                 })
     }
 
@@ -52,7 +56,7 @@ impl VM {
     }
 
     fn compile(&mut self, source: &str) -> InterpretResult {
-        let mut parser = Parser::new(&mut self.object_manager);
+        let mut parser = Parser::new(&mut self.object_manager, &mut self.intern_strings);
         let result = parser.compile(source, &mut *self.chunk);
         if !result {
             println!("Compile Error!");
@@ -159,7 +163,7 @@ impl VM {
                                     let mut combination = String::with_capacity(string_a.content.len() + string_b.content.len());
                                     combination.push_str(string_a.content.as_str());
                                     combination.push_str(string_b.content.as_str());
-                                    let combinated_value = make_string_value(combination.as_str());
+                                    let combinated_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, combination.as_str());
                                     self.push(combinated_value);
                                 }
                             } else if is_number(&value_a) && is_number(&value_b) {

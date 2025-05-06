@@ -10,6 +10,7 @@ mod scanner;
 mod compiler;
 mod object;
 mod object_manager;
+mod table;
 
 fn repl() {
     let mut vm = vm::VM::new();
