@@ -45,3 +45,25 @@ impl PartialEq<ObjectString> for ObjectString {
 
 impl Eq for ObjectString {
 }
+
+#[cfg(feature = "debug_trace_execution")]
+mod debug_feature {
+    use crate::object::ObjectType;
+
+    use super::{Object, ObjectString};
+
+    impl Drop for Object {
+        fn drop(&mut self) {
+            print!("drop object: ");
+            match self.obj_type {
+                ObjectType::ObjString => {
+                    let object_string = std::ptr::from_mut(self) as *const ObjectString;
+                    println!("type=ObjectString, content={}", unsafe {
+                        (*object_string).content.as_str()
+                    });
+                }
+            }
+        }
+    }
+}
+
