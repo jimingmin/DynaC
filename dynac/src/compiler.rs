@@ -116,7 +116,10 @@ impl<'a> Parser<'a> {
         self.chunk = Some(chunk);
         self.advance();
 
-        self.expression();
+        while !self.match_token(TokenType::Eof) {
+            self.declaration();
+        }
+
         self.consume(TokenType::Eof, "Expect end of expression.");
         
         self.end_compiler();
@@ -137,6 +140,19 @@ impl<'a> Parser<'a> {
                 panic!("Compiler was not initialized correctly.");
             }
         }
+    }
+
+    fn match_token(&mut self, token_type: TokenType) -> bool {
+        if !self.check(token_type) {
+            return false;
+        }
+
+        self.advance();
+        true
+    }
+
+    fn check(&self, token_type: TokenType) -> bool {
+        self.current.token_type == token_type
     }
 
     fn consume(&mut self, token_type: TokenType, message: &'a str) {
@@ -216,6 +232,30 @@ impl<'a> Parser<'a> {
             &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
         );
         self.emit_constant(value);
+    }
+
+    fn declaration(&mut self) {
+        self.statement()
+    }
+
+    fn statement(&mut self) {
+        if self.match_token(TokenType::Print) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    fn print_statement(&mut self) {
+        self.expression();
+        self.consume(TokenType::Semicolon, "Expect ';' after value.");
+        self.emit_byte(OpCode::Print.to_byte());
+    }
+
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.consume(TokenType::Semicolon, "Expect ';' after expression.");
+        self.emit_byte(OpCode::Pop.to_byte());
     }
 
     fn grouping(&mut self) {

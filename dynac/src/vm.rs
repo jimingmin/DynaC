@@ -221,6 +221,13 @@ impl VM {
                     let value = make_numer_value(-as_number(&byte));
                     self.push(value);
                 }
+                Some(chunk::OpCode::Print) => {
+                    print_value(&self.pop());
+                    println!();
+                }
+                Some(chunk::OpCode::Pop) => {
+                    self.pop();
+                }
                 Some(chunk::OpCode::Return) => {
                     print_value(&self.pop());
                     println!();
@@ -352,5 +359,11 @@ mod tests {
     fn test_string_concatenate() {
         let mut vm = VM::new();
         assert!(vm.interpret("\"st\" + \"ri\" + \"ng\"") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_print_statement() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print 1 + 2; print 3 * 4;") == InterpretResult::InterpretOk);
     }
 }

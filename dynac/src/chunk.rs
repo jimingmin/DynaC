@@ -17,6 +17,8 @@ pub enum OpCode {
     Divide,
     Not,
     Negate,
+    Print,
+    Pop,
     Return,
     //Unknown(u8),
 }
@@ -37,6 +39,8 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::Divide as u8 as usize] = Some(OpCode::Divide);
     arr[OpCode::Not as u8 as usize] = Some(OpCode::Not);
     arr[OpCode::Negate as u8 as usize] = Some(OpCode::Negate);
+    arr[OpCode::Print as u8 as usize] = Some(OpCode::Print);
+    arr[OpCode::Pop as u8 as usize] = Some(OpCode::Pop);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr
 };
