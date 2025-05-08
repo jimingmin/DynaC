@@ -226,7 +226,7 @@ impl<'a> Parser<'a> {
         //         self.emit_constant(value);
         //     }
         // }
-        let mut value = make_string_value(
+        let value = make_string_value(
             &mut self.object_manager,
             &mut self.intern_strings,
             &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
@@ -235,7 +235,11 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) {
-        self.statement()
+        self.statement();
+
+        if self.panic_mode {
+            self.synchronize();
+        }
     }
 
     fn statement(&mut self) {
@@ -327,6 +331,30 @@ impl<'a> Parser<'a> {
                 self.error("Expect infix parse function.");
                 return;
             }
+        }
+    }
+
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+        while self.current.token_type != TokenType::Eof {
+            if self.previous.token_type == TokenType::Semicolon {
+                return;
+            }
+
+            match self.current.token_type {
+                token_type if matches!(token_type,
+                    TokenType::Class |
+                    TokenType::Fun |
+                    TokenType::Var |
+                    TokenType::For |
+                    TokenType::If |
+                    TokenType::While |
+                    TokenType::Print |
+                    TokenType::Return) => return,
+                _ => ()
+            }
+
+            self.advance()
         }
     }
 
