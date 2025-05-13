@@ -1,15 +1,15 @@
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub enum ObjectType {
     ObjString,
 }
 #[repr(C)]
-#[derive(Hash)]
+#[derive(Hash, Clone)]
 pub struct Object {
     pub obj_type: ObjectType,
     pub next: *mut Object,
 }
 #[repr(C)]
-#[derive(Hash)]
+#[derive(Hash, Clone)]
 pub struct ObjectString {
     pub object: Object,
     pub content: String,

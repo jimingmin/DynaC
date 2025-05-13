@@ -177,6 +177,11 @@ pub fn as_mutable_object(value: &Value) -> *mut Object {
 }
 
 #[inline(always)]
+pub fn as_string_object(value: &Value) -> *const ObjectString {
+    as_object(value) as *const ObjectString
+}
+
+#[inline(always)]
 pub fn make_bool_value(value: bool) -> Value {
     Value {
         value_type: ValueType::ValueBool,
@@ -201,21 +206,19 @@ pub fn make_numer_value(value: f64) -> Value {
 }
 
 #[inline(always)]
-pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mut Table, value: &str) -> Value {
-    if let Some(string) = intern_strings.find(value) {
-        Value {
-            value_type: ValueType::ValueObject,
-            value_as: ValueUnion{object: string as *mut Object},
-        }
+pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mut Table, str_value: &str) -> Value {
+    if let Some(value) = intern_strings.find(str_value) {
+        value.clone()
     } else {
-        let object_string = Box::into_raw(ObjectString::new(value));
-        intern_strings.insert(object_string);
-        object_manager.push_object(object_string as *mut Object);
-
-        Value {
+        let object_string = Box::into_raw(ObjectString::new(str_value));
+        let value = Value {
             value_type: ValueType::ValueObject,
             value_as: ValueUnion{object: object_string as *mut Object},
-        }
+        };
+        intern_strings.insert(str_value.to_string(), value);
+        object_manager.push_object(object_string as *mut Object);
+
+        value.clone()
     }
 }
 

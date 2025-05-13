@@ -8,7 +8,7 @@ use crate::value::Value;
 
 pub struct Table {
     //entries: HashMap<Rc<str>, Rc<ObjectString>>,
-    entries: HashMap<Rc<str>, *const ObjectString>
+    entries: HashMap<String, Value>
 }
 
 
@@ -21,12 +21,12 @@ impl Table {
         Box::new(Table { entries: HashMap::new() })
     }
 
-    pub fn insert(&mut self, object_string: *const ObjectString) {
-        let key = Rc::from((unsafe { &*object_string }).content.as_str());
-        self.entries.insert(key, object_string);
+    pub fn insert(&mut self, key: String, value: Value) {
+        //let key = Rc::from((unsafe { &*object_string }).content.as_str());
+        self.entries.insert(key, value);
     }
 
-    pub fn find(&self, key: &str) -> Option<*const ObjectString>{
+    pub fn find(&self, key: &str) -> Option<Value>{
         self.entries.get(key).copied()
     }
 
