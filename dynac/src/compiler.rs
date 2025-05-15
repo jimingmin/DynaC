@@ -13,7 +13,7 @@ pub struct Parser<'a> {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 enum Precedence {
     None,
     Assignment, // =
@@ -48,7 +48,7 @@ impl From<u8> for Precedence {
 }
 
 //type ParserFn = for<'a> fn(&'a mut Parser<'a>);
-type ParserFn = fn(&mut Parser<'_>);
+type ParserFn = fn(&mut Parser<'_>, can_assign: bool);
 
 #[derive(Debug, Clone, Copy)]
 struct ParseRule {
@@ -73,23 +73,95 @@ impl ParseRule {
 
 const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
     let mut rules = [ParseRule::new(None, None, Precedence::None); TokenType::Eof as usize + 1];
-    rules[TokenType::LeftParen as usize] = ParseRule::new(Some(|parser| parser.grouping()), None, Precedence::None);
-    rules[TokenType::Minus as usize] = ParseRule::new(Some(|parser| parser.unary()), Some(|parser| parser.binary()), Precedence::Term);
-    rules[TokenType::Plus as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Term);
-    rules[TokenType::Slash as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Factor);
-    rules[TokenType::Star as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Factor);
-    rules[TokenType::Number as usize] = ParseRule::new(Some(|parser| parser.number()), None, Precedence::None);
-    rules[TokenType::String as usize] = ParseRule::new(Some(|parser| parser.string()), None, Precedence::None);
-    rules[TokenType::False as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
-    rules[TokenType::True as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
-    rules[TokenType::Nil as usize] = ParseRule::new(Some(|parser| parser.literal()), None, Precedence::None);
-    rules[TokenType::Bang as usize] = ParseRule::new(Some(|parser| parser.unary()), None, Precedence::None);
-    rules[TokenType::BangEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Equality);
-    rules[TokenType::EqualEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Equality);
-    rules[TokenType::Greater as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
-    rules[TokenType::GreaterEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
-    rules[TokenType::Less as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
-    rules[TokenType::LessEqual as usize] = ParseRule::new(None, Some(|parser| parser.binary()), Precedence::Comparison);
+    rules[TokenType::LeftParen as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.grouping()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::Minus as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.unary()), 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Term);
+
+    rules[TokenType::Plus as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Term);
+
+    rules[TokenType::Slash as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Factor);
+
+    rules[TokenType::Star as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Factor);
+
+    rules[TokenType::Number as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.number()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::String as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.string()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::False as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.literal()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::True as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.literal()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::Nil as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.literal()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::Bang as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.unary()), 
+        None, 
+        Precedence::None);
+
+    rules[TokenType::BangEqual as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Equality);
+
+    rules[TokenType::EqualEqual as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Equality);
+
+    rules[TokenType::Greater as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Comparison);
+
+    rules[TokenType::GreaterEqual as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Comparison);
+
+    rules[TokenType::Less as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Comparison);
+
+    rules[TokenType::LessEqual as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.binary()), 
+        Precedence::Comparison);
+
+    rules[TokenType::Identifier as usize] = ParseRule::new(
+        Some(|parser, can_assign| parser.variable(can_assign)), 
+        None, 
+        Precedence::None);
 
     rules
 };
@@ -190,12 +262,12 @@ impl<'a> Parser<'a> {
     }
 
     fn make_constant(&mut self, value: Value) -> u8 {
-        let constant = self.current_chunk().add_constant(value);
-        if constant > u8::max_value().into() {
+        let constant_index = self.current_chunk().add_constant(value);
+        if constant_index > u8::max_value().into() {
             self.error("Too many constants in one chunk.");
             return 0;
         }
-        constant as u8
+        constant_index as u8
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
@@ -235,10 +307,56 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) {
-        self.statement();
+        if self.match_token(TokenType::Var) {
+            self.variable_declaration();
+        } else {
+            self.statement();
+        }
 
         if self.panic_mode {
             self.synchronize();
+        }
+    }
+
+    fn variable_declaration(&mut self) {
+        let global = self.parse_variable("Expect variable name.");
+
+        if self.match_token(TokenType::Equal) {
+            self.expression();
+        } else {
+            self.emit_byte(OpCode::Nil.to_byte());
+        }
+        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.");
+
+        self.define_variable(global);
+    }
+
+    fn parse_variable(&mut self, message: &'a str) -> u8 {
+        self.consume(TokenType::Identifier, message);
+        return self.identifier_constant(self.previous.clone());
+    }
+
+    fn identifier_constant(&mut self, previous: Token) -> u8 {
+        let value = make_string_value(&mut self.object_manager, &mut self.intern_strings, previous.value);
+        self.make_constant(value)
+    }
+
+    fn define_variable(&mut self, global: u8) {
+        self.emit_bytes(OpCode::DefineGlobal.to_byte(), global);
+    }
+
+    fn variable(&mut self, can_assign: bool) {
+        self.named_variable(self.previous.clone(), can_assign)
+    }
+
+    fn named_variable(&mut self, name: Token, can_assign: bool) {
+        let constant_index = self.identifier_constant(name);
+
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.emit_bytes(OpCode::SetGlobal.to_byte(), constant_index);
+        } else {
+            self.emit_bytes(OpCode::GetGlobal.to_byte(), constant_index);
         }
     }
 
@@ -316,8 +434,9 @@ impl<'a> Parser<'a> {
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
 
+        let can_assign = precedence <= Precedence::Assignment;
         if let Some(prefix) = &RULES[self.previous.token_type as usize].prefix {
-            prefix(self);
+            prefix(self, can_assign);
         } else {
             self.error("Expect expression.");
             return;
@@ -326,11 +445,15 @@ impl<'a> Parser<'a> {
         while precedence as u8 <= (&RULES[self.current.token_type as usize]).precedence as u8 {
             self.advance();
             if let Some(infix) = &RULES[self.previous.token_type as usize].infix {
-                infix(self);
+                infix(self, can_assign);
             } else {
                 self.error("Expect infix parse function.");
                 return;
             }
+        }
+
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.error("Invalid assignment target.");
         }
     }
 
@@ -423,23 +546,24 @@ mod tests {
         let mut object_manager = ObjectManager::new();
         let mut intern_strings = Table::new();
         let mut parser = Parser::new(&mut *object_manager, &mut *intern_strings);
-        let result = parser.compile("!(5 - 4 > 3 * 2 == !nil)", &mut *chunk);
+        let result = parser.compile("!(5 - 4 > 3 * 2 == !nil);", &mut *chunk);
         assert!(result);
 
         let chunk = parser.chunk();
 
-// 00000000 00000001 Constant            0 '5'
-// 00000002        | Constant            1 '4'
-// 00000004        | Subtract
-// 00000005        | Constant            2 '3'
-// 00000007        | Constant            3 '2'
-// 00000009        | Multiply
-// 00000010        | Greater
-// 00000011        | Nil
-// 00000012        | Not
-// 00000013        | Equal
-// 00000014        | Not
-// 00000015        | Return
+        // 00000000 00000001 Constant            0 '5'
+        // 00000002        | Constant            1 '4'
+        // 00000004        | Subtract
+        // 00000005        | Constant            2 '3'
+        // 00000007        | Constant            3 '2'
+        // 00000009        | Multiply
+        // 00000010        | Greater
+        // 00000011        | Nil
+        // 00000012        | Not
+        // 00000013        | Equal
+        // 00000014        | Not
+        // 00000015        | Pop
+        // 00000016        | Return
         assert!(chunk.constants[0] == Value {
             value_type: ValueType::ValueNumber,
             value_as: ValueUnion{number: 5.0}});
@@ -463,7 +587,8 @@ mod tests {
         assert!(chunk.code[12] == OpCode::Not.to_byte());
         assert!(chunk.code[13] == OpCode::Equal.to_byte());
         assert!(chunk.code[14] == OpCode::Not.to_byte());
-        assert!(chunk.code[15] == OpCode::Return.to_byte());
+        assert!(chunk.code[15] == OpCode::Pop.to_byte());
+        assert!(chunk.code[16] == OpCode::Return.to_byte());
     }
 
     #[test]
@@ -473,11 +598,11 @@ mod tests {
         let mut parser = Parser::new(&mut *object_manager, &mut *intern_strings);
         
         let mut chunk1 = Chunk::new();
-        let result = parser.compile("\"this is a test string\"", &mut *chunk1);
+        let result = parser.compile("\"this is a test string\";", &mut *chunk1);
         assert!(result);
 
         let mut chunk2 = Chunk::new();
-        let result = parser.compile("\"this is a test string\"", &mut *chunk2);
+        let result = parser.compile("\"this is a test string\";", &mut *chunk2);
         assert!(result);
 
         assert!(intern_strings.len() == 1);

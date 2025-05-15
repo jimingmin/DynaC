@@ -19,6 +19,9 @@ pub enum OpCode {
     Negate,
     Print,
     Pop,
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
     Return,
     //Unknown(u8),
 }
@@ -41,6 +44,9 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::Negate as u8 as usize] = Some(OpCode::Negate);
     arr[OpCode::Print as u8 as usize] = Some(OpCode::Print);
     arr[OpCode::Pop as u8 as usize] = Some(OpCode::Pop);
+    arr[OpCode::DefineGlobal as u8 as usize] = Some(OpCode::DefineGlobal);
+    arr[OpCode::GetGlobal as u8 as usize] = Some(OpCode::GetGlobal);
+    arr[OpCode::SetGlobal as u8 as usize] = Some(OpCode::SetGlobal);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr
 };

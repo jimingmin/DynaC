@@ -24,13 +24,16 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
 
     let instruction = chunk::OpCode::from_byte(chunk.code[offset]);
     match instruction {
-        Some(chunk::OpCode::Constant) => {
+        Some(op) if matches!(op,
+            chunk::OpCode::Constant
+            | chunk::OpCode::DefineGlobal
+        ) => {
             constant_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
         Some(op) if matches!(op,
             chunk::OpCode::Nil
             | chunk::OpCode::True
-            | chunk::OpCode::False
+            //| chunk::OpCode::False
             | chunk::OpCode::Equal
             | chunk::OpCode::Greater
             | chunk::OpCode::Less
@@ -42,9 +45,12 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
             | chunk::OpCode::Not
             | chunk::OpCode::Print
             | chunk::OpCode::Pop
+            | chunk::OpCode::GetGlobal
+            | chunk::OpCode::SetGlobal
             | chunk::OpCode::Return) => {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
+        Some(chunk::OpCode::False) => simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset),
         _ => {
             println!("Unknown opcode {}", &chunk::OpCode::byte_to_string(&instruction).to_string());/*  */
             offset + 1
