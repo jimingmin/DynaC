@@ -232,10 +232,13 @@ impl VM {
                 }
                 Some(chunk::OpCode::DefineGlobal) => {
                     if let Some(object_string) = self.read_string() {
-                        self.globals.insert((unsafe { (*object_string).clone() }).content, Value {
-                            value_type: ValueType::ValueObject,
-                            value_as: ValueUnion{object: object_string as *mut Object},
-                        });
+                        if let Some(value) = self.peek() {
+                            self.globals.insert((unsafe { (*object_string).clone() }).content,
+                                value);
+                            self.pop();
+                        } else {
+                            return Err(format!("No value on stack to define the global value {}.", (unsafe { (*object_string).clone() }).content).to_string());
+                        }
                     } else {
                         return Err("Unknown global variable defination.".to_string());
                     }
@@ -261,14 +264,14 @@ impl VM {
                                 return Err("Unknown global variable.".to_string());
                             }
                         } else {
-                            return Err(format!("No value on stack to set global value {}.", (unsafe { (*object_string).clone() }).content).to_string());
+                            return Err(format!("No value on stack to set the global value {}.", (unsafe { (*object_string).clone() }).content).to_string());
                         }
                     } else {
                         return Err("Unknown global variable.".to_string());
                     }
                 }
                 Some(chunk::OpCode::Return) => {
-                    print_value(&self.pop());
+                    //print_value(&self.pop());
                     println!();
                     return Ok(InterpretResult::InterpretOk);
                 }
