@@ -91,5 +91,9 @@ impl Chunk {
         self.constants.push(value);
         self.constants.len() - 1
     }
+
+    pub fn find_constant(&self, value: Value) -> Option<usize> {
+        self.constants.iter().position(|&x| x == value)
+    }
 }
 

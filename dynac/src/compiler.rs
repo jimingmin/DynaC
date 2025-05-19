@@ -262,6 +262,10 @@ impl<'a> Parser<'a> {
     }
 
     fn make_constant(&mut self, value: Value) -> u8 {
+        if let Some(index) = self.current_chunk().find_constant(value) {
+            return index as u8;
+        }
+
         let constant_index = self.current_chunk().add_constant(value);
         if constant_index > u8::max_value().into() {
             self.error("Too many constants in one chunk.");
