@@ -27,6 +27,8 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
         Some(op) if matches!(op,
             chunk::OpCode::Constant
             | chunk::OpCode::DefineGlobal
+            | chunk::OpCode::GetGlobal
+            | chunk::OpCode::SetGlobal
         ) => {
             constant_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
@@ -45,8 +47,6 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
             | chunk::OpCode::Not
             | chunk::OpCode::Print
             | chunk::OpCode::Pop
-            | chunk::OpCode::GetGlobal
-            | chunk::OpCode::SetGlobal
             | chunk::OpCode::Return) => {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
