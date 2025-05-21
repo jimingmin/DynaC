@@ -35,7 +35,7 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
         Some(op) if matches!(op,
             chunk::OpCode::Nil
             | chunk::OpCode::True
-            //| chunk::OpCode::False
+            | chunk::OpCode::False
             | chunk::OpCode::Equal
             | chunk::OpCode::Greater
             | chunk::OpCode::Less
@@ -50,7 +50,11 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
             | chunk::OpCode::Return) => {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
-        Some(chunk::OpCode::False) => simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset),
+        Some(op) if matches!(op,
+            chunk::OpCode::GetGlobal
+            | chunk::OpCode::SetGlobal) => {
+            byte_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
+        }
         _ => {
             println!("Unknown opcode {}", &chunk::OpCode::byte_to_string(&instruction).to_string());/*  */
             offset + 1
@@ -70,4 +74,10 @@ fn constant_instruction(name: &str, chunk: &chunk::Chunk, offset: usize) -> usiz
 fn simple_instruction(name: &str, offset: usize) -> usize {
     println!("{}", name);
     offset + 1
+}
+
+fn byte_instruction(name: &str, chunk: &chunk::Chunk, offset: usize) -> usize {
+    let slot = chunk.code[offset + 1];
+    println!("{:<16} {:>4}", name, slot);
+    offset + 2
 }

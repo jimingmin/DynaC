@@ -270,6 +270,24 @@ impl VM {
                         return Err("Unknown global variable.".to_string());
                     }
                 }
+                Some(chunk::OpCode::GetLocal) => {
+                    if let Some(slot) = self.read_byte() {
+                        self.push(make_numer_value(slot as f64));
+                    } else {
+                        return Err("Unknown local variable.".to_string());
+                    }
+                }
+                Some(chunk::OpCode::SetLocal) => {
+                    if let Some(slot) = self.read_byte() {
+                        if let Some(value) = self.peek() {
+                            self.stack[slot as usize] = value;
+                        } else {
+                            return Err("No value on stack to set the local value.".to_string());
+                        }
+                    } else {
+                        return Err("Unknown local variable.".to_string());
+                    }
+                }
                 Some(chunk::OpCode::Return) => {
                     //print_value(&self.pop());
                     println!();
