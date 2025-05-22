@@ -359,13 +359,13 @@ impl<'a> Parser<'a> {
 
     fn declare_variable(&mut self) {
         let current_compiler = &self.compiler;
-        if current_compiler.locals.is_empty() {
+        if current_compiler.scope_depth == 0 { // means top level
             return;
         }
 
         let mut err = false;
         let variable_name = self.previous.clone();
-        for local in &current_compiler.locals {
+        for local in current_compiler.locals.iter().rev() {
             if local.depth != -1 && local.depth < current_compiler.scope_depth {
                 break;
             }
@@ -388,10 +388,10 @@ impl<'a> Parser<'a> {
             return;
         }
 
-        let local_index = self.compiler.locals.len();
-        let local = &mut self.compiler.locals[local_index];
-        local.name = variable_name;
-        local.depth = self.compiler.scope_depth;
+        // Set 'depth' to -1 in order to mark this variable uninitialized. If the variable
+        // declaration expression has an initializer that is parsed correctly, the 'depth'
+        // will be set to the scope depth of 'compiler'
+        self.compiler.locals.push(Local { name: variable_name, depth: -1 });
     }
 
     fn identifier_constant(&mut self, previous: Token) -> u8 {
@@ -400,11 +400,18 @@ impl<'a> Parser<'a> {
     }
 
     fn define_variable(&mut self, global: u8) {
+        // > 0 means a local variable
         if self.compiler.scope_depth > 0 {
+            self.mark_initialized();
             return;
         }
         
         self.emit_bytes(OpCode::DefineGlobal.to_byte(), global);
+    }
+
+    fn mark_initialized(&mut self) {
+        let current_local_index = self.compiler.locals.len() - 1;
+        self.compiler.locals[current_local_index].depth = self.compiler.scope_depth;
     }
 
     fn variable(&mut self, can_assign: bool) {
@@ -430,8 +437,11 @@ impl<'a> Parser<'a> {
     }
 
     fn resove_local(&mut self, name: &Token) -> i32 {
-        for (index, local) in self.compiler.locals.iter().enumerate() {
+        for (index, local) in self.compiler.locals.iter().enumerate().rev() {
             if Self::identifier_equal(&name, &local.name) {
+                if local.depth == -1 { // it's not fully defined
+                    self.error("Can't read local variable in its own initializer.");
+                }
                 return index as i32;
             }
         }

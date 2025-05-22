@@ -51,8 +51,8 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }
         Some(op) if matches!(op,
-            chunk::OpCode::GetGlobal
-            | chunk::OpCode::SetGlobal) => {
+            chunk::OpCode::GetLocal
+            | chunk::OpCode::SetLocal) => {
             byte_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
         _ => {

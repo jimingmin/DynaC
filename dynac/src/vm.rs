@@ -272,7 +272,7 @@ impl VM {
                 }
                 Some(chunk::OpCode::GetLocal) => {
                     if let Some(slot) = self.read_byte() {
-                        self.push(make_numer_value(slot as f64));
+                        self.push(self.stack[slot as usize]);
                     } else {
                         return Err("Unknown local variable.".to_string());
                     }
@@ -447,5 +447,19 @@ mod tests {
     fn test_define_global_var() {
         let mut vm = VM::new();
         assert!(vm.interpret("var beverage = \"coffee\";") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_print_local_var() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("{var a = \"hello world!\"; print a;}") == InterpretResult::InterpretOk);
+        assert!(vm.interpret("{
+                                var a = \"the first\";
+                                {
+                                    var a = \"the second\";
+                                    print a;
+                                }
+                                print a;
+                            }") == InterpretResult::InterpretOk);
     }
 }
