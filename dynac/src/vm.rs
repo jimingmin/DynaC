@@ -288,6 +288,19 @@ impl VM {
                         return Err("Unknown local variable.".to_string());
                     }
                 }
+                Some(chunk::OpCode::JumpIfFalse) => {
+                    if let Some(offset) = self.read_short() {
+                        if let Some(value) = self.peek() {
+                            if Self::is_falsey(&value) {
+                                self.ip += offset as usize;
+                            }
+                        } else {
+                            return Err("No value on stack for 'if' expression result.".to_string());
+                        }
+                    } else {
+                        return Err("There are not enough bytes to read a short.".to_string());
+                    }
+                }
                 Some(chunk::OpCode::Return) => {
                     //print_value(&self.pop());
                     println!();
@@ -295,6 +308,18 @@ impl VM {
                 }
                 _ => return Err("Unknown opcode".to_string()),
             }
+        }
+    }
+
+    fn read_short(&mut self) -> Option<u16> {
+        if self.ip + 1 < self.chunk.code.len() {
+            let mut short: u16 = 0;
+            short = (self.chunk.code[self.ip] as u16) << 8;
+            short = short | (self.chunk.code[self.ip + 1] as u16);
+            self.ip += 2;
+            Some(short)
+        } else {
+            None
         }
     }
 
@@ -460,6 +485,15 @@ mod tests {
                                     print a;
                                 }
                                 print a;
+                            }") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_if_statement() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print \"hello world!\";
+                            if (1 > 0) {
+                                print \"if condition is true\";
                             }") == InterpretResult::InterpretOk);
     }
 }
