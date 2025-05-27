@@ -472,9 +472,18 @@ impl<'a> Parser<'a> {
         self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
 
-        let jump_offset = self.emit_jump_bytes(OpCode::JumpIfFalse.to_byte());
+        let jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfFalse.to_byte());
+        self.emit_byte(OpCode::Pop.to_byte()); // to pop the condition result to eliminate the effect on the stack
         self.statement();
-        self.patch_jump_offset(jump_offset);
+
+        let else_jump_offset_operand = self.emit_jump_bytes(OpCode::Jump.to_byte());
+        self.patch_jump_offset(jump_offset_operand);
+        self.emit_byte(OpCode::Pop.to_byte()); // This operation is the same as the above 'Pop' operation
+
+        if self.match_token(TokenType::Else) {
+            self.statement();
+        }
+        self.patch_jump_offset(else_jump_offset_operand);
     }
 
     fn emit_jump_bytes(&mut self, instruction: u8) -> u16 {

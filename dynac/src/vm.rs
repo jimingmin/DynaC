@@ -301,6 +301,13 @@ impl VM {
                         return Err("There are not enough bytes to read a short.".to_string());
                     }
                 }
+                Some(chunk::OpCode::Jump) => {
+                    if let Some(offset) = self.read_short() {
+                        self.ip += offset as usize;
+                    } else {
+                        return Err("There are not enough bytes to read a short.".to_string());
+                    }
+                }
                 Some(chunk::OpCode::Return) => {
                     //print_value(&self.pop());
                     println!();
@@ -494,6 +501,17 @@ mod tests {
         assert!(vm.interpret("print \"hello world!\";
                             if (1 > 0) {
                                 print \"if condition is true\";
+                            }") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_else_statement() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print \"hello world!\";
+                            if (1 < 0) {
+                                print \"if condition is true\";
+                            } else {
+                                print \"if condition is false\";
                             }") == InterpretResult::InterpretOk);
     }
 }
