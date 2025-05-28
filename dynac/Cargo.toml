@@ -9,6 +9,7 @@ edition = "2021"
 default = ["debug_trace_execution", "debug_print_code"]
 debug_trace_execution = []
 debug_print_code = []
+debug_trace_object = []
 
 [dependencies]
 strum = "0.24"

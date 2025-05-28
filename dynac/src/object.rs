@@ -46,7 +46,7 @@ impl PartialEq<ObjectString> for ObjectString {
 impl Eq for ObjectString {
 }
 
-#[cfg(feature = "debug_trace_execution")]
+#[cfg(feature = "debug_trace_object")]
 mod debug_feature {
     use crate::object::ObjectType;
 
