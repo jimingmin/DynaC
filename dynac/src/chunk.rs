@@ -25,7 +25,9 @@ pub enum OpCode {
     GetLocal,
     SetLocal,
     JumpIfFalse,
+    JumpIfTrue,
     Jump,
+    Loop,
     Return,
     //Unknown(u8),
 }
@@ -54,7 +56,9 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::GetLocal as u8 as usize] = Some(OpCode::GetLocal);
     arr[OpCode::SetLocal as u8 as usize] = Some(OpCode::SetLocal);
     arr[OpCode::JumpIfFalse as u8 as usize] = Some(OpCode::JumpIfFalse);
+    arr[OpCode::JumpIfTrue as u8 as usize] = Some(OpCode::JumpIfTrue);
     arr[OpCode::Jump as u8 as usize] = Some(OpCode::Jump);
+    arr[OpCode::Loop as u8 as usize] = Some(OpCode::Loop);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr
 };

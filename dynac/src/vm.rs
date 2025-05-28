@@ -295,7 +295,20 @@ impl VM {
                                 self.ip += offset as usize;
                             }
                         } else {
-                            return Err("No value on stack for 'if' expression result.".to_string());
+                            return Err("No value on stack for condition expression result.".to_string());
+                        }
+                    } else {
+                        return Err("There are not enough bytes to read a short.".to_string());
+                    }
+                }
+                Some(chunk::OpCode::JumpIfTrue) => {
+                    if let Some(offset) = self.read_short() {
+                        if let Some(value) = self.peek() {
+                            if !Self::is_falsey(&value) {
+                                self.ip += offset as usize;
+                            }
+                        } else {
+                            return Err("No value on stack for condition expression result.".to_string());
                         }
                     } else {
                         return Err("There are not enough bytes to read a short.".to_string());
@@ -304,6 +317,13 @@ impl VM {
                 Some(chunk::OpCode::Jump) => {
                     if let Some(offset) = self.read_short() {
                         self.ip += offset as usize;
+                    } else {
+                        return Err("There are not enough bytes to read a short.".to_string());
+                    }
+                }
+                Some(chunk::OpCode::Loop) => {
+                    if let Some(offset) = self.read_short() {
+                        self.ip -= offset as usize;
                     } else {
                         return Err("There are not enough bytes to read a short.".to_string());
                     }
@@ -498,20 +518,65 @@ mod tests {
     #[test]
     fn test_if_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"hello world!\";
+        assert!(vm.interpret("print \"test if statement...\";
                             if (1 > 0) {
-                                print \"if condition is true\";
+                                print \"'1 > 0' is true\";
                             }") == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_else_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"hello world!\";
+        assert!(vm.interpret("print \"test else clause...\";
                             if (1 < 0) {
-                                print \"if condition is true\";
+                                print \"'1 < 0' is true\";
                             } else {
-                                print \"if condition is false\";
+                                print \"'1 < 0' is false\";
+                            }") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_and_operator() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print \"test and operator...\";
+                            if ( 1 > 0 and 2 > 1) {
+                                print \"'1 > 0 and 2 > 1' is true\";
+                            } else {
+                                print \"'1 > 0 and 2 > 1' is false\";
+                            }
+                            
+                            if ( 1 > 0 and 2 < 1) {
+                                print \"'1 > 0 and 2 < 1' is true\";
+                            } else {
+                                print \"'1 > 0 and 2 < 1' is false\";
+                            }") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_or_operator() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print \"test or operator...\";
+                            if ( 1 > 0 or 2 > 1) {
+                                print \"'1 > 0 or 2 > 1' is true\";
+                            } else {
+                                print \"'1 > 0 or 2 > 1' is false\";
+                            }
+                            
+                            if ( 1 > 0 or 2 < 1) {
+                                print \"'1 > 0 or 2 < 1' is true\";
+                            } else {
+                                print \"'1 > 0 or 2 < 1' is false\";
+                            }") == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_while_statement() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print \"test while statement...\";
+                            var count = 10;
+                            while (count > 0) {
+                                print count;
+                                count = count - 1;
                             }") == InterpretResult::InterpretOk);
     }
 }

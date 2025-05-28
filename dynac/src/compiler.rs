@@ -174,6 +174,16 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
         None, 
         Precedence::None);
 
+    rules[TokenType::And as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.and(can_assign)), 
+        Precedence::And);
+
+    rules[TokenType::Or as usize] = ParseRule::new(
+        None, 
+        Some(|parser, can_assign| parser.or(can_assign)), 
+        Precedence::Or);
+
     rules
 };
 
@@ -453,15 +463,31 @@ impl<'a> Parser<'a> {
         left.token_type == right.token_type && left.value == right.value
     }
 
+    fn and(&mut self, can_assign: bool) {
+        let jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfFalse.to_byte());
+        self.emit_byte(OpCode::Pop.to_byte());
+        self.parse_precedence(Precedence::And);
+        self.patch_jump_offset(jump_offset_operand);
+    }
+
+    fn or(&mut self, can_assign: bool) {
+        let jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfTrue.to_byte());
+        self.emit_byte(OpCode::Pop.to_byte());
+        self.parse_precedence(Precedence::Or);
+        self.patch_jump_offset(jump_offset_operand);
+    }
+
     fn statement(&mut self) {
         if self.match_token(TokenType::If) {
             self.if_statement();
-        } else if self.match_token(TokenType::Print) {
-            self.print_statement();
         } else if self.match_token(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
             self.end_scope();
+        } else if self.match_token(TokenType::While) {
+            self.while_statement();
+        } else if self.match_token(TokenType::Print) {
+            self.print_statement();
         } else {
             self.expression_statement();
         }
@@ -535,6 +561,36 @@ impl<'a> Parser<'a> {
         self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after value.");
         self.emit_byte(OpCode::Print.to_byte());
+    }
+
+    fn while_statement(&mut self) {
+        let loop_start = self.current_chunk().code.len();
+
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expect ')' after condition.");
+
+        let jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfFalse.to_byte());
+        self.emit_byte(OpCode::Pop.to_byte());
+
+        self.statement();
+        self.emit_loop(loop_start); // jump to the condition expression of 'while' statement
+
+        self.patch_jump_offset(jump_offset_operand);
+        self.emit_byte(OpCode::Pop.to_byte());
+    }
+
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_byte(OpCode::Loop.to_byte());
+
+        // +2 to skip for the operand of 'Loop' instruction.
+        let offset = self.current_chunk().code.len() - loop_start + 2;
+        if offset > u16::max_value().into() {
+            self.error("Loop body too large.");
+        }
+
+        self.emit_byte(((offset as u16) >> 8 & 0xff) as u8);
+        self.emit_byte((offset & 0xff) as u8);
     }
 
     fn expression_statement(&mut self) {

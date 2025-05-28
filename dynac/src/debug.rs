@@ -57,8 +57,13 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
         }
         Some(op) if matches!(op, 
             chunk::OpCode::Jump
-            | chunk::OpCode::JumpIfFalse) => {
+            | chunk::OpCode::JumpIfFalse
+            | chunk::OpCode::JumpIfTrue) => {
             jump_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), 1, chunk, offset)
+        }
+        Some(op) if matches!(op,
+            chunk::OpCode::Loop) => {
+            jump_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), -1, chunk, offset)
         }
         _ => {
             println!("Unknown opcode {}", &chunk::OpCode::byte_to_string(&instruction).to_string());/*  */
