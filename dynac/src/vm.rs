@@ -169,9 +169,11 @@ impl VM {
                                     self.push(combinated_value);
                                 }
                             } else if is_number(&value_a) && is_number(&value_b) {
-                                let number_a = as_number(&value_a);
-                                let number_b = as_number(&value_b);
-                                self.push(make_numer_value(number_a + number_b));
+                                let result = self.binary_op(chunk::OpCode::Add);
+                                match result {
+                                    Err(_) => return result,
+                                    _ => (),
+                                }
                             } else {
                                 return Err("Operands must be two numbers or two strings.".to_string());
                             }
@@ -579,7 +581,7 @@ mod tests {
                                 count = count - 1;
                             }") == InterpretResult::InterpretOk);
     }
-
+ 
     #[test]
     fn test_for_statement() {
         let mut vm = VM::new();
