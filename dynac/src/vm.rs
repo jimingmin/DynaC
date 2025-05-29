@@ -579,4 +579,22 @@ mod tests {
                                 count = count - 1;
                             }") == InterpretResult::InterpretOk);
     }
+
+    #[test]
+    fn test_for_statement() {
+        let mut vm = VM::new();
+        assert!(vm.interpret("print \"test for statement...\";
+                            for(var i = 0; i < 2; i = i + 1) {
+                                print i;
+                            }
+                            var i = 0;
+                            for (; i < 2; i = i + 1) {
+                                print i;
+                            }
+                            i = 0;
+                            for (; i < 1;) {
+                                print i;
+                                i = i + 1;
+                            }") == InterpretResult::InterpretOk);
+    }
 }

@@ -486,6 +486,8 @@ impl<'a> Parser<'a> {
             self.end_scope();
         } else if self.match_token(TokenType::While) {
             self.while_statement();
+        } else if self.match_token(TokenType::For) {
+            self.for_statement();
         } else if self.match_token(TokenType::Print) {
             self.print_statement();
         } else {
@@ -591,6 +593,50 @@ impl<'a> Parser<'a> {
 
         self.emit_byte(((offset as u16) >> 8 & 0xff) as u8);
         self.emit_byte((offset & 0xff) as u8);
+    }
+
+    fn for_statement(&mut self) {
+        self.begin_scope();
+        self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
+        if self.match_token(TokenType::Semicolon) {
+            // no initializer
+        } else if self.match_token(TokenType::Var) {
+            self.variable_declaration();
+        } else {
+            self.expression_statement();
+        }
+
+        let mut loop_start = self.current_chunk().code.len();
+        let mut exit_jump_offset_operand: i32 = -1;
+        if !self.match_token(TokenType::Semicolon) { // it has a condition clause
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expect ';' after loop condition.");
+
+            // Jump out of the loop if the condition is false.
+            exit_jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfFalse.to_byte()) as i32;
+            self.emit_byte(OpCode::Pop.to_byte()); // pop the condition result.
+        }
+
+        if !self.match_token(TokenType::RightParen) { // it has a increment clause
+            let body_jump_offset_operand = self.emit_jump_bytes(OpCode::Jump.to_byte());
+            let increment_start = self.current_chunk().code.len();
+            self.expression();
+            self.emit_byte(OpCode::Pop.to_byte());
+            self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
+
+            self.emit_loop(loop_start);
+            loop_start = increment_start;
+            self.patch_jump_offset(body_jump_offset_operand);
+        }
+
+        self.statement();
+        self.emit_loop(loop_start);
+
+        if exit_jump_offset_operand != -1 {
+            self.patch_jump_offset(exit_jump_offset_operand as u16);
+            self.emit_byte(OpCode::Pop.to_byte()); // pop the condition result.
+        }
+        self.end_scope();
     }
 
     fn expression_statement(&mut self) {
