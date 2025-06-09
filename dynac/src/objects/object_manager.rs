@@ -1,4 +1,4 @@
-use crate::{object::{self, Object}, value::{as_mutable_object, is_object, Value}};
+use crate::{objects::object::{self, Object}, value::{as_mutable_object, is_object, Value}};
 
 
 pub struct ObjectManager {

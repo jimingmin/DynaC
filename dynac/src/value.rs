@@ -1,4 +1,5 @@
-use crate::{object::{self, Object, ObjectString, ObjectType}, object_manager::ObjectManager, table::Table};
+use crate::objects::{object::{self, Object, ObjectType}, object_manager::ObjectManager, object_string::ObjectString};
+use crate::table::Table;
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ValueType {

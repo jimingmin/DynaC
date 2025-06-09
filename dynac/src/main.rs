@@ -2,15 +2,17 @@ use std::io::{self, Read, Write};
 use std::fs;
 use std::process;
 
+mod objects;
+
 mod chunk;
 mod debug;
 mod value;
 mod vm;
 mod scanner;
 mod compiler;
-mod object;
-mod object_manager;
 mod table;
+
+use crate::objects::object::Object;
 
 fn repl() {
     let mut vm = vm::VM::new();

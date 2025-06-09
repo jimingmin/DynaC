@@ -1,4 +1,4 @@
-use crate::{chunk::{self, Chunk, OpCode}, object::Object, object_manager::{self, ObjectManager}, scanner::{self, Scanner, Token, TokenType}, table::Table, value::{self, *}};
+use crate::{chunk::{self, Chunk, OpCode}, objects::object::Object, objects::object_manager::{self, ObjectManager}, scanner::{self, Scanner, Token, TokenType}, table::Table, value::{self, *}};
 use std::{any::Any, f64, io::Write, thread::current};
 
 pub struct Parser<'a> {

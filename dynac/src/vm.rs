@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, object::{Object, ObjectString}, table::Table, value::{self, as_bool, as_number, as_object, as_string_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
-use crate::object_manager::ObjectManager;
+use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, objects::{object::Object, object_string::ObjectString}, table::Table, value::{self, as_bool, as_number, as_object, as_string_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::objects::object_manager::ObjectManager;
 
 const MAX_STACK_SIZE: usize = 256;
 
