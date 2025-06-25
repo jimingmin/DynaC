@@ -1,18 +1,15 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::{RefCell, RefMut}, ptr::NonNull, rc::Rc};
 
-use crate::{chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, debug, objects::{object::Object, object_string::ObjectString}, table::Table, value::{self, as_bool, as_number, as_object, as_string_object, is_bool, is_nil, is_number, is_string, make_bool_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_function::ObjectFunction, object_string::ObjectString}, table::Table, value::{self, as_bool, as_function_object, as_number, as_object, as_string_object, is_bool, is_function, is_nil, is_number, is_object, is_string, make_bool_value, make_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
 use crate::objects::object_manager::ObjectManager;
 
-const MAX_STACK_SIZE: usize = 256;
-
 pub struct VM {
-    chunk: Box<chunk::Chunk>,
-    ip: usize,
+    frames: Vec<Box<CallFrame>>,
     stack: [Value; MAX_STACK_SIZE],
     stack_top_pos: usize,
     object_manager: Box<ObjectManager>,
     intern_strings: Box<Table>,
-    globals: Box<Table>
+    globals: Box<Table>,
 }
 
 #[derive(PartialEq)]
@@ -31,7 +28,14 @@ impl Drop for VM {
             }
 
             unsafe {
-                let _ = Box::from_raw(object);
+                let object_ptr = Box::from_raw(object);
+                if object_ptr.obj_type == ObjectType::ObjString {
+                    let object_string = &*(object as *const ObjectString);
+                    print!("{}", object_string.content);
+                } else if object_ptr.obj_type == ObjectType::ObjFunction {
+                    let object_function = &*(object as *const ObjectFunction);
+                    print!("{}", object_function.name);
+                }
             }
         }
     }
@@ -39,18 +43,17 @@ impl Drop for VM {
 
 impl VM {
     pub fn new() -> Box<VM> {
-        let chunk = chunk::Chunk::new();
         Box::new(VM {
-                chunk, ip: 0,
+                frames: vec![],
                 stack: [Value {
                     value_type: ValueType::ValueNil,
                     value_as: ValueUnion{number: 0.0},
                 }; MAX_STACK_SIZE],
                 stack_top_pos: 0,
-                object_manager: ObjectManager::new(),
-                intern_strings: Table::new(),
-                globals: Table::new(),
-                })
+                object_manager: Box::new(ObjectManager::new()),
+                intern_strings: Box::new(Table::new()),
+                globals: Box::new(Table::new()),
+            })
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
@@ -59,12 +62,21 @@ impl VM {
 
     fn compile(&mut self, source: &str) -> InterpretResult {
         let mut parser = Parser::new(&mut self.object_manager, &mut self.intern_strings);
-        let result = parser.compile(source, &mut *self.chunk);
-        if !result {
+        if let Some(function) = parser.compile(source) {
+            let function_ptr = Box::into_raw(function);
+            self.push(make_function_value(function_ptr));
+
+            // let mut frame = Box::new(CallFrame::new(NonNull::new(&mut self.stack[0]).unwrap()));
+            // frame.set_function(function.clone());
+            // self.frames.push(frame);
+
+            self.call(function_ptr, 0);
+        } else {
             println!("Compile Error!");
             return InterpretResult::InterpretCompileError;
         }
 
+        // return InterpretResult::InterpretOk;
         match self.run() {
             Ok(result) => result,
             Err(e) => {
@@ -72,6 +84,18 @@ impl VM {
                 return InterpretResult::InterpretRuntimeError;
             },
         }
+    }
+
+    fn current_frame(&mut self) -> &mut CallFrame {
+        let current_frame_index = self.frames.len() - 1;
+        &mut self.frames[current_frame_index]
+    }
+
+    fn current_chunk(&mut self) -> &mut Box<Chunk> {
+        &mut self.current_frame().function().chunk
+        // RefMut::map(self.current_frame().function(), |f| {
+        //     &mut f.chunk
+        // })
     }
 
     fn push(&mut self, value: Value) {
@@ -112,13 +136,54 @@ impl VM {
         is_nil(value) || (is_bool(value) && !as_bool(value))
     }
 
+    fn call_value(&mut self, callee: Value, argument_count: u8) -> bool {
+        if is_object(&callee) {
+            if is_function(&callee) {
+                return self.call(as_function_object(&callee) as *mut ObjectFunction, argument_count);
+            }
+
+        }
+        self.report("Can only call functions and classes.");
+        false
+    }
+
+    fn call(&mut self, function: *mut ObjectFunction, argument_count: u8) -> bool {
+        let arity = unsafe { &(*function) }.arity;
+        if arity != argument_count {
+            self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
+            return false;
+        }
+
+        if self.frames.len() >= MAX_FRAMES_SIIZE {
+            self.runtime_error("Stack overflow.");
+            return false;
+        }
+        let stack_base_pos = self.stack_top_pos - argument_count as usize - 1;
+        let mut frame = CallFrame::new(NonNull::new(&mut self.stack[stack_base_pos]).unwrap(), stack_base_pos);
+        // unsafe {
+        //     let rc_function = Rc::from_raw(function);
+        //     match Rc::try_unwrap(rc_function) {
+        //         Ok(f) => {
+        //             frame.set_function(Rc::new(RefCell::new(f))); 
+        //         },
+        //         Err(f) => {
+        //             return false;
+        //         }
+        //     }
+        // }
+        frame.set_function(function);
+        self.frames.push(Box::new(frame));
+
+        true
+    }
+
     fn run(&mut self) -> Result<InterpretResult, String> {
         loop {
-            debug_feature::disassemble_instruction(&self);
+            debug_feature::disassemble_instruction(self);
 
             let instruction = match self.read_byte() {
                 Some(byte) => chunk::OpCode::from_byte(byte),
-                None => return Err("Unexpected end of bytecode".to_string()),
+                None => return self.report("Unexpected end of bytecode"),
             };
 
             match instruction {
@@ -175,13 +240,13 @@ impl VM {
                                     _ => (),
                                 }
                             } else {
-                                return Err("Operands must be two numbers or two strings.".to_string());
+                                return self.report("Operands must be two numbers or two strings.");
                             }
                         } else {
-                            return Err("There is a lack of second operand in the '+' Operation.".to_string());
+                            return self.report("There is a lack of second operand in the '+' Operation.");
                         }
                     } else {
-                        return Err("There is a lack of operands in the '+' Operation.".to_string());
+                        return self.report("There is a lack of operands in the '+' Operation.");
                     }
 
                     // let result = self.binary_op(chunk::OpCode::Add);
@@ -218,7 +283,7 @@ impl VM {
                 Some(chunk::OpCode::Negate) => {
                     if let Some(value) = self.peek_steps(0) {
                         if !is_number(&value) {
-                            return Err("Operand must be a number.".to_string());
+                            return self.report("Operand must be a number.");
                         }
                     }
                     let byte = self.pop();
@@ -235,14 +300,14 @@ impl VM {
                 Some(chunk::OpCode::DefineGlobal) => {
                     if let Some(object_string) = self.read_string() {
                         if let Some(value) = self.peek() {
-                            self.globals.insert((unsafe { (*object_string).clone() }).content,
+                            self.globals.insert((unsafe { (*object_string).clone() }).content.clone(),
                                 value);
                             self.pop();
                         } else {
-                            return Err(format!("No value on stack to define the global value {}.", (unsafe { (*object_string).clone() }).content).to_string());
+                            return self.report(format!("No value on stack to define the global value {}.", (unsafe { (*object_string).clone() }).content).as_str());
                         }
                     } else {
-                        return Err("Unknown global variable defination.".to_string());
+                        return self.report("Unknown global variable defination.");
                     }
                 }
                 Some(chunk::OpCode::GetGlobal) => {
@@ -251,115 +316,153 @@ impl VM {
                         if let Some(value) = self.globals.find(key) {
                             self.push(value);
                         } else {
-                            return Err(format!("Undefined global variable {}.", key).to_string());
+                            return self.report(format!("Undefined global variable {}.", key).as_str());
                         }
                     } else {
-                        return Err("Unknown global variable.".to_string());
+                        return self.report("Unknown global variable.");
                     }
                 }
                 Some(chunk::OpCode::SetGlobal) => {
                     if let Some(object_string) = self.read_string() {
                         if let Some(value) = self.peek() {
-                            let key = (unsafe { (*object_string).clone() }).content;
+                            let key = (unsafe { (*object_string).clone() }).content.clone();
                             if let None = self.globals.insert(key, value) { // It's a new key that means the target key has not been defined.
                                 self.globals.remove(&(unsafe { (*object_string).clone() }).content);
-                                return Err("Unknown global variable.".to_string());
+                                return self.report("Unknown global variable.");
                             }
                         } else {
-                            return Err(format!("No value on stack to set the global value {}.", (unsafe { (*object_string).clone() }).content).to_string());
+                            return self.report(format!("No value on stack to set the global value {}.", (unsafe { (*object_string).clone() }).content).as_str());
                         }
                     } else {
-                        return Err("Unknown global variable.".to_string());
+                        return self.report("Unknown global variable.");
                     }
                 }
                 Some(chunk::OpCode::GetLocal) => {
                     if let Some(slot) = self.read_byte() {
-                        self.push(self.stack[slot as usize]);
+                        let local = *self.current_frame().get_stack_value(slot as usize);
+                        self.push(local);
                     } else {
-                        return Err("Unknown local variable.".to_string());
+                        return self.report("Unknown local variable.");
                     }
                 }
                 Some(chunk::OpCode::SetLocal) => {
                     if let Some(slot) = self.read_byte() {
                         if let Some(value) = self.peek() {
-                            self.stack[slot as usize] = value;
+                            self.current_frame().set_stack_value(slot as usize, value);
                         } else {
-                            return Err("No value on stack to set the local value.".to_string());
+                            return self.report("No value on stack to set the local value.");
                         }
                     } else {
-                        return Err("Unknown local variable.".to_string());
+                        return self.report("Unknown local variable.");
                     }
                 }
                 Some(chunk::OpCode::JumpIfFalse) => {
                     if let Some(offset) = self.read_short() {
                         if let Some(value) = self.peek() {
                             if Self::is_falsey(&value) {
-                                self.ip += offset as usize;
+                                *self.current_frame().ip() += offset as usize;
                             }
                         } else {
-                            return Err("No value on stack for condition expression result.".to_string());
+                            return self.report("No value on stack for condition expression result.");
                         }
                     } else {
-                        return Err("There are not enough bytes to read a short.".to_string());
+                        return self.report("There are not enough bytes to read a short.");
                     }
                 }
                 Some(chunk::OpCode::JumpIfTrue) => {
                     if let Some(offset) = self.read_short() {
                         if let Some(value) = self.peek() {
                             if !Self::is_falsey(&value) {
-                                self.ip += offset as usize;
+                                *self.current_frame().ip() += offset as usize;
                             }
                         } else {
-                            return Err("No value on stack for condition expression result.".to_string());
+                            return self.report("No value on stack for condition expression result.");
                         }
                     } else {
-                        return Err("There are not enough bytes to read a short.".to_string());
+                        return self.report("There are not enough bytes to read a short.");
                     }
                 }
                 Some(chunk::OpCode::Jump) => {
                     if let Some(offset) = self.read_short() {
-                        self.ip += offset as usize;
+                        *self.current_frame().ip() += offset as usize;
                     } else {
-                        return Err("There are not enough bytes to read a short.".to_string());
+                        return self.report("There are not enough bytes to read a short.");
                     }
                 }
                 Some(chunk::OpCode::Loop) => {
                     if let Some(offset) = self.read_short() {
-                        self.ip -= offset as usize;
+                        *self.current_frame().ip() -= offset as usize;
                     } else {
-                        return Err("There are not enough bytes to read a short.".to_string());
+                        return self.report("There are not enough bytes to read a short.");
+                    }
+                }
+                Some(chunk::OpCode::Call) => {
+                    if let Some(argument_count) = self.read_byte() {
+                        if !self.call_value(self.peek_steps(argument_count as usize).unwrap(), argument_count) {
+                            return self.report("Instruction Call failed.");
+                        }
+                        //*self.current_frame().ip() -= argument_count as usize;
+                    } else {
+                        return self.report("There are not enough bytes to read a short.");
                     }
                 }
                 Some(chunk::OpCode::Return) => {
+                    let result = self.pop();
+                    let stack_top_pos = self.current_frame().get_stack_base_offset();
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        self.pop();
+                        return Ok(InterpretResult::InterpretOk);
+                    }
+                    self.stack_top_pos = stack_top_pos;
+                    self.push(result);
                     //print_value(&self.pop());
-                    println!();
-                    return Ok(InterpretResult::InterpretOk);
+                    //println!();
+                    //return Ok(InterpretResult::InterpretOk);
                 }
-                _ => return Err("Unknown opcode".to_string()),
+                _ => return self.report("Unknown opcode"),
             }
         }
     }
 
     fn read_short(&mut self) -> Option<u16> {
-        if self.ip + 1 < self.chunk.code.len() {
-            let mut short: u16 = 0;
-            short = (self.chunk.code[self.ip] as u16) << 8;
-            short = short | (self.chunk.code[self.ip + 1] as u16);
-            self.ip += 2;
-            Some(short)
-        } else {
-            None
+        let mut result = None;
+        {
+            let frame = self.current_frame();
+            let ip = *frame.ip();
+            let function = frame.function();
+            let chunk = function.chunk();
+            
+            if ip + 1 < chunk.len() {
+                let mut short: u16 = 0;
+                short = (chunk.read_from_offset(ip).unwrap() as u16) << 8;
+                short = short | (chunk.read_from_offset(ip + 1).unwrap() as u16);
+                result = Some(short);
+            }
         }
+        if result.is_some() {
+            *self.current_frame().ip() += 2;
+        }
+        result
     }
 
     fn read_byte(&mut self) -> Option<u8> {
-        if self.ip < self.chunk.code.len() {
-            let current_byte = self.chunk.code[self.ip];
-            self.ip += 1;
-            Some(current_byte)
-        } else {
-            None
+        let mut result = None;
+        {
+            let frame = self.current_frame();
+            let ip = *frame.ip();
+            let function = frame.function();
+            let chunk = function.chunk();
+
+            if ip < chunk.len() {
+                result = chunk.read_from_offset(ip);
+            }
         }
+        if result.is_some() {
+            *self.current_frame().ip() += 1;
+        }
+
+        result
     }
 
     fn read_constant(&mut self) -> Option<Value> {
@@ -367,7 +470,8 @@ impl VM {
             Some(byte) => byte,
             None => return None,
         };
-        Some(self.chunk.constants[instruction as usize])
+        let chunk = &self.current_frame().function().chunk;
+        Some(*chunk.get_constant(instruction as usize))
     }
 
     fn read_string(&mut self) -> Option<*const ObjectString> {
@@ -395,18 +499,18 @@ impl VM {
         op_code: chunk::OpCode,
     ) -> Result<InterpretResult, String> {
             if self.stack_top_pos < 2 {
-                return Err("Binary operator must have two operands.".to_string());
+                return self.report("Binary operator must have two operands.");
             }
 
             if let Some(b) = self.peek_steps(0) {
                 if !is_number(&b) {
-                    return Err("Second operand must be a number.".to_string());
+                    return self.report("Second operand must be a number.");
                 }
             }
 
             if let Some(a) = self.peek_steps(1) {
                 if !is_number(&a) {
-                    return Err("First operand must be a number.".to_string());
+                    return self.report("First operand must be a number.");
                 }
             }
             let value_b = as_number(&self.pop());
@@ -430,18 +534,61 @@ impl VM {
                 chunk::OpCode::Divide => {
                     self.push(make_numer_value(value_a / value_b))
                 }
-                _ => return Err("Unknown binary operator.".to_string()),
+                _ => return self.report("Unknown binary operator."),
             };
 
             Ok(InterpretResult::InterpretOk)
-        }
+    }
+
+    fn report(&mut self, message: &str) -> Result<InterpretResult, String> {
+        self.report_runtime_error(message)
+    }
+
+    fn report_runtime_error(&mut self, message: &str) -> Result<InterpretResult, String> {
+        self.runtime_error(message)
+    }
+
+    fn runtime_error(&mut self, message: &str) -> Result<InterpretResult, String> {
+        // Print the formatted error message to stderr
+        //eprintln!("{}", args);
+
+        // Calculate instruction offset
+        //unsafe {
+            let frame = self.current_frame();
+            let instruction_index = *frame.ip() - 1;
+            let function = frame.function();
+            let chunk = function.chunk();
+            if let Some(instruction) = chunk.read_from_offset(instruction_index) {
+                if let Some(line) = chunk.read_line_from_offset(instruction as usize) {
+                    //eprintln!("[line {}] in script", line);
+                    return Err(format_args!("Runtime error: {} [line {}] in script", message, line).to_string());
+                } else {
+                    return Err(format_args!("Runtime error: {} [line ???] in script (invalid instruction index)", message).to_string());
+                    //eprintln!("[line ???] in script (invalid instruction index)");
+                }
+            } else {
+                return Err(format_args!("Runtime error: {} [instruction ???] in script (invalid instruction)", message).to_string());
+                //eprintln!("[instruction ???] in script (invalid instruction)");
+            }
+            //let instruction = (vm.ip as usize) - (vm.chunk as *const _ as *const u8 as usize) - 1;
+            
+            // Get the corresponding line number
+            // if let Some(line) = vm.chunk.as_ref().and_then(|c| c.lines.get(instruction)) {
+            //     eprintln!("[line {}] in script", line);
+            // } else {
+            //     eprintln!("[line ???] in script (invalid instruction index)");
+            // }
+        //}
+
+        //Err(format!("Runtime error: {}", format))
+    }
 }
 
 #[cfg(feature = "debug_trace_execution")]
 mod debug_feature {
     use super::*;
 
-    pub fn disassemble_instruction(vm: &VM) {
+    pub fn disassemble_instruction(vm: &mut VM) {
         if vm.stack_top_pos < 1 {
             return;
         }
@@ -453,7 +600,8 @@ mod debug_feature {
             print!(" ]");
         }
         println!();
-        debug::disassemble_instruction(&vm.chunk, vm.ip);
+        let ip = *vm.current_frame().ip();
+        debug::disassemble_instruction(vm.current_chunk().as_ref(), ip);
     }
 }
 
@@ -575,7 +723,7 @@ mod tests {
     fn test_while_statement() {
         let mut vm = VM::new();
         assert!(vm.interpret("print \"test while statement...\";
-                            var count = 10;
+                            var count = 1;
                             while (count > 0) {
                                 print count;
                                 count = count - 1;
@@ -585,7 +733,7 @@ mod tests {
     #[test]
     fn test_for_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"test for statement...\";
+        let result = vm.interpret("print \"test for statement...\";
                             for(var i = 0; i < 2; i = i + 1) {
                                 print i;
                             }
@@ -597,6 +745,18 @@ mod tests {
                             for (; i < 1;) {
                                 print i;
                                 i = i + 1;
-                            }") == InterpretResult::InterpretOk);
+                            }");
+        assert!(result == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_function_call() {
+        let mut vm = VM::new();
+        let result = vm.interpret(
+            "fn sum(a, b, c) {
+                        return a + b + c;
+                    }
+                    print 4 + sum(5, 6, 7);");
+        assert!(result == InterpretResult::InterpretOk);
     }
 }

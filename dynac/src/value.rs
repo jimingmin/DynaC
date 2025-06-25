@@ -1,4 +1,6 @@
-use crate::objects::{object::{self, Object, ObjectType}, object_manager::ObjectManager, object_string::ObjectString};
+use std::{cell::RefCell, rc::Rc};
+
+use crate::objects::{object::{self, Object, ObjectType}, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_string::ObjectString};
 use crate::table::Table;
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
@@ -138,6 +140,13 @@ pub fn is_string(value: &Value) -> bool {
 }
 
 #[inline(always)]
+pub fn is_function(value: &Value) -> bool {
+    unsafe {
+        is_object(value) && (*as_object(value)).obj_type == ObjectType::ObjFunction
+    }
+}
+
+#[inline(always)]
 pub fn as_bool(value: &Value) -> bool {
     if value.value_type == ValueType::ValueBool {
         return unsafe {
@@ -183,6 +192,11 @@ pub fn as_string_object(value: &Value) -> *const ObjectString {
 }
 
 #[inline(always)]
+pub fn as_function_object(value: &Value) -> *const ObjectFunction {
+    as_object(value) as *const ObjectFunction
+}
+
+#[inline(always)]
 pub fn make_bool_value(value: bool) -> Value {
     Value {
         value_type: ValueType::ValueBool,
@@ -206,12 +220,12 @@ pub fn make_numer_value(value: f64) -> Value {
     }
 }
 
-#[inline(always)]
 pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mut Table, str_value: &str) -> Value {
     if let Some(value) = intern_strings.find(str_value) {
         value.clone()
     } else {
-        let object_string = Box::into_raw(ObjectString::new(str_value));
+        let object = Box::new(ObjectString::new(str_value));
+        let object_string = Box::into_raw(object);
         let value = Value {
             value_type: ValueType::ValueObject,
             value_as: ValueUnion{object: object_string as *mut Object},
@@ -223,6 +237,10 @@ pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mu
     }
 }
 
+pub fn make_function_value(function: *mut ObjectFunction) -> Value {
+    Value { value_type: ValueType::ValueObject, value_as: ValueUnion{object: function as *mut Object} }
+}
+
 pub type ValueArray = Vec<Value>;
 
 pub fn print_value(value: &Value) {
@@ -230,12 +248,10 @@ pub fn print_value(value: &Value) {
         ValueType::ValueNumber => {
             let real_value = as_number(&value);
             if real_value.fract() == 0.0 {
-                // 如果没有小数部分，则按整数打印
                 print!("{}", real_value as i64);
             } else {
-                // 否则，找到最接近的有效数字进行打印
                 let formatted = format!("{:.10}", real_value).trim_end_matches('0').to_string();
-                let formatted = formatted.trim_end_matches('.').to_string(); // 去掉末尾多余的点
+                let formatted = formatted.trim_end_matches('.').to_string();
                 print!("{}", formatted);
             }
         }
@@ -264,6 +280,14 @@ fn print_object(value: &Value) {
             ObjectType::ObjString => {
                 let object_string = &*(object_ptr as *const ObjectString);
                 print!("{}", object_string.content);
+            },
+            ObjectType::ObjFunction => {
+                let object_function = &*(object_ptr as *const ObjectFunction);
+                if object_function.name.is_empty() {
+                    print!("<script>");
+                    return;
+                }
+                print!("<fn {}>", object_function.name);
             }
         }
     }

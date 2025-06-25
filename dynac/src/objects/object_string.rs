@@ -8,15 +8,13 @@ pub struct ObjectString {
 }
 
 impl ObjectString {
-    pub fn new(content: &str) -> Box<ObjectString> {
-        Box::new(
-            ObjectString{
-                object: Object {
-                        obj_type: ObjectType::ObjString,
-                        next: std::ptr::null_mut(),
-                    },
-                content: content.to_string()
-        })
+    pub fn new(content: &str) -> Self {
+        ObjectString{
+            object: Object {
+                    obj_type: ObjectType::ObjString,
+                },
+            content: content.to_string()
+        }
     }
 }
 
@@ -27,4 +25,18 @@ impl PartialEq<ObjectString> for ObjectString {
 }
 
 impl Eq for ObjectString {
+}
+
+mod debug_feature {
+    use crate::objects::object_string::ObjectString;
+
+    impl Drop for ObjectString {
+        fn drop(&mut self) {
+            print!("drop string object: ");
+            let object_string = std::ptr::from_mut(self) as *const ObjectString;
+            println!("type=ObjectString, content={}", unsafe {
+                (*object_string).content.as_str()
+            });
+        }
+    }
 }

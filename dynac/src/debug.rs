@@ -5,7 +5,7 @@ pub fn disassemble_chunk(chunk: &chunk::Chunk, name: &str) {
     println!("== {} ==", name);
 
     let mut offset = 0;
-    let code_len = chunk.code.len();
+    let code_len = chunk.len();
     while offset < code_len {
         offset = disassemble_instruction(chunk, offset);
     }
@@ -16,13 +16,13 @@ pub fn disassemble_chunk(chunk: &chunk::Chunk, name: &str) {
 
 pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
     print!("{:08} ", offset);
-    if offset > 0 && chunk.lines[offset] == chunk.lines[offset - 1] {
+    if offset > 0 && chunk.read_line_from_offset(offset) == chunk.read_line_from_offset(offset - 1) {
         print!("       | ");
     } else {
-        print!("{:08} ", chunk.lines[offset]);
+        print!("{:08} ", chunk.read_line_from_offset(offset).unwrap());
     }
 
-    let instruction = chunk::OpCode::from_byte(chunk.code[offset]);
+    let instruction = chunk::OpCode::from_byte(chunk.read_from_offset(offset).unwrap());
     match instruction {
         Some(op) if matches!(op,
             chunk::OpCode::Constant
@@ -52,7 +52,8 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
         }
         Some(op) if matches!(op,
             chunk::OpCode::GetLocal
-            | chunk::OpCode::SetLocal) => {
+            | chunk::OpCode::SetLocal
+            | chunk::OpCode::Call) => {
             byte_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), chunk, offset)
         }
         Some(op) if matches!(op, 
@@ -73,8 +74,8 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
 }
 
 fn jump_instruction(name: &str, sign: i32, chunk: &chunk::Chunk, offset: usize) -> usize {
-    let mut jump_offset = (chunk.code[offset + 1] as u16) << 8;
-    jump_offset |= chunk.code[offset + 2] as u16;
+    let mut jump_offset = (chunk.read_from_offset(offset + 1).unwrap() as u16) << 8;
+    jump_offset |= chunk.read_from_offset(offset + 2).unwrap() as u16;
 
     let signed_jump = (sign as isize) * (jump_offset as isize);
     let new_jump_offset = (offset as isize + 3 + signed_jump) as usize;
@@ -84,10 +85,10 @@ fn jump_instruction(name: &str, sign: i32, chunk: &chunk::Chunk, offset: usize) 
 }
 
 fn constant_instruction(name: &str, chunk: &chunk::Chunk, offset: usize) -> usize {
-    let constant = chunk.code[offset + 1];
+    let constant = chunk.read_from_offset(offset + 1).unwrap();
     print!("{:<16} {:>4} '", name, constant);
     let constant_index = constant as usize;
-    value::print_value(&chunk.constants[constant_index]);
+    value::print_value(&chunk.get_constant(constant_index));
     println!("'");
     offset + 2
 }
@@ -98,7 +99,7 @@ fn simple_instruction(name: &str, offset: usize) -> usize {
 }
 
 fn byte_instruction(name: &str, chunk: &chunk::Chunk, offset: usize) -> usize {
-    let slot = chunk.code[offset + 1];
+    let slot = chunk.read_from_offset(offset + 1).unwrap();
     println!("{:<16} {:>4}", name, slot);
     offset + 2
 }

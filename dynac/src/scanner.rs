@@ -38,7 +38,7 @@ pub enum TokenType {
     Else,
     False,
     For,
-    Fun,
+    Fn,
     If,
     Nil,
     Or,
@@ -68,7 +68,7 @@ static KEYWORDS: phf::Map<&'static str, TokenType> = phf::phf_map! {
     "while" => TokenType::While,
     "for" => TokenType::For,
     "false" => TokenType::False,
-    "fun" => TokenType::Fun,
+    "fn" => TokenType::Fn,
     "this" => TokenType::This,
     "true" => TokenType::True,
 };
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_check_keyword() {
-        let mut scanner = Scanner::new("this is for if fun  fun1 forfor %%dadf");
+        let mut scanner = Scanner::new("this is for if fn  fn1 forfor %%dadf");
         let mut token = scanner.scan_token();
         assert!(token.token_type == TokenType::This);
         assert!(token.value == "this");
@@ -405,12 +405,12 @@ mod tests {
         assert!(token.value == "if");
 
         token = scanner.scan_token();
-        assert!(token.token_type == TokenType::Fun);
-        assert!(token.value == "fun");
+        assert!(token.token_type == TokenType::Fn);
+        assert!(token.value == "fn");
 
         token = scanner.scan_token();
         assert!(token.token_type == TokenType::Identifier);
-        assert!(token.value == "fun1");
+        assert!(token.value == "fn1");
 
         token = scanner.scan_token();
         assert!(token.token_type == TokenType::Identifier);
@@ -435,7 +435,7 @@ mod tests {
                 a = a + 1;
             }
         }
-        fun test() {
+        fn test() {
             var a = 1 + 2 * 3 / 4 - -5;
             if a > 1 {
                 a = -a;

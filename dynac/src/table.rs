@@ -13,8 +13,8 @@ impl Table {
     //     Rc::new(RefCell::new(Table { entries: HashMap::new() }))
     // }
 
-    pub fn new() -> Box<Table> {
-        Box::new(Table { entries: HashMap::new() })
+    pub fn new() -> Self {
+        Table { entries: HashMap::new() }
     }
 
     pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {

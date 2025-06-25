@@ -28,6 +28,7 @@ pub enum OpCode {
     JumpIfTrue,
     Jump,
     Loop,
+    Call,
     Return,
     //Unknown(u8),
 }
@@ -59,6 +60,7 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::JumpIfTrue as u8 as usize] = Some(OpCode::JumpIfTrue);
     arr[OpCode::Jump as u8 as usize] = Some(OpCode::Jump);
     arr[OpCode::Loop as u8 as usize] = Some(OpCode::Loop);
+    arr[OpCode::Call as u8 as usize] = Some(OpCode::Call);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr
 };
@@ -84,19 +86,31 @@ impl OpCode {
 }
 
 pub struct Chunk {
-    pub code: Vec<u8>,
-    pub lines: Vec<usize>,
-    pub constants: ValueArray,
+    code: Vec<u8>,
+    lines: Vec<usize>,
+    constants: ValueArray,
 }
 
 impl Chunk {
-    pub fn new() -> Box<Chunk> {
-        Box::new(Chunk{code:vec![], constants:vec![], lines:vec![]})
+    pub fn new() -> Self {
+        Chunk{code:vec![], constants:vec![], lines:vec![]}
     }
 
     pub fn write(&mut self, byte: u8, line: usize) {
         self.code.push(byte);
         self.lines.push(line)
+    }
+
+    pub fn write_by_offset(&mut self, offset: usize, byte: u8) {
+        self.code[offset] = byte
+    }
+
+    pub fn read_from_offset(&self, offset: usize) -> Option<u8> {
+        self.code.get(offset).cloned()
+    }
+
+    pub fn read_line_from_offset(&self, offset: usize) -> Option<usize> {
+        self.lines.get(offset).cloned()
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
@@ -106,6 +120,14 @@ impl Chunk {
 
     pub fn find_constant(&self, value: Value) -> Option<usize> {
         self.constants.iter().position(|&x| x == value)
+    }
+
+    pub fn get_constant(&self, offset: usize) -> &Value {
+        self.constants.get(offset).unwrap()
+    }
+
+    pub fn len(&self) -> usize {
+        self.code.len()
     }
 }
 

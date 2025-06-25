@@ -11,6 +11,8 @@ mod vm;
 mod scanner;
 mod compiler;
 mod table;
+mod call_frame;
+mod constants;
 
 use crate::objects::object::Object;
 
