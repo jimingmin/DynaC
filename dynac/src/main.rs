@@ -3,6 +3,7 @@ use std::fs;
 use std::process;
 
 mod objects;
+mod std_mod;
 
 mod chunk;
 mod debug;

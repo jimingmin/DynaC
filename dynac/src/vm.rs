@@ -1,6 +1,6 @@
 use std::{cell::{RefCell, RefMut}, ptr::NonNull, rc::Rc};
 
-use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_function::ObjectFunction, object_string::ObjectString}, table::Table, value::{self, as_bool, as_function_object, as_number, as_object, as_string_object, is_bool, is_function, is_nil, is_number, is_object, is_string, make_bool_value, make_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
 use crate::objects::object_manager::ObjectManager;
 
 pub struct VM {
@@ -57,6 +57,7 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
+        self.setup_standards();
         self.compile(source)
     }
 
@@ -84,6 +85,11 @@ impl VM {
                 return InterpretResult::InterpretRuntimeError;
             },
         }
+    }
+
+    fn setup_standards(&mut self) {
+        let clock_function = Box::new(ObjectNativeFunction::new("clock".to_string(), 0, ClockTime::new()));
+        self.globals.insert("clock".to_string(), make_native_function_value(Box::into_raw(clock_function)));
     }
 
     fn current_frame(&mut self) -> &mut CallFrame {
@@ -140,6 +146,20 @@ impl VM {
         if is_object(&callee) {
             if is_function(&callee) {
                 return self.call(as_function_object(&callee) as *mut ObjectFunction, argument_count);
+            } else if is_native_function(&callee) {
+                let native_function = as_native_function_object(&callee);
+                let result = (unsafe { &*native_function }).invoke(&None);
+                match result {
+                    Ok(value) => {
+                        self.stack_top_pos -= (unsafe { &*native_function }).arity as usize + 1;
+                        self.push(value);
+                        return true;
+                    },
+                    Err(message) => {
+                        self.runtime_error(&format!("Native function {} has exception {}.", (unsafe { &*native_function }).name, message));
+                        return false;
+                    }
+                }
             }
 
         }
@@ -757,6 +777,34 @@ mod tests {
                         return a + b + c;
                     }
                     print 4 + sum(5, 6, 7);");
+        assert!(result == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_native_function_call() {
+        let mut vm = VM::new();
+        let result = vm.interpret(
+            "print clock();");
+        assert!(result == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_fib_function() {
+        let mut vm = VM::new();
+        let result = vm.interpret("
+            fn fib(number) {
+                if (number < 2) {
+                    return number;
+                }
+
+                return fib(number - 2) + fib(number - 1);
+            }
+            
+            var start = clock();
+            var result = fib(10);
+            print result;
+            var end = clock();
+            print end - start;");
         assert!(result == InterpretResult::InterpretOk);
     }
 }

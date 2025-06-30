@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::objects::{object::{self, Object, ObjectType}, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_string::ObjectString};
+use crate::objects::{object::{self, Object, ObjectType}, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_native_function::ObjectNativeFunction, object_string::ObjectString};
 use crate::table::Table;
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
@@ -147,6 +147,13 @@ pub fn is_function(value: &Value) -> bool {
 }
 
 #[inline(always)]
+pub fn is_native_function(value: &Value) -> bool {
+    unsafe {
+        is_object(value) && (*as_object(value)).obj_type == ObjectType::ObjNativeFunction
+    }
+}
+
+#[inline(always)]
 pub fn as_bool(value: &Value) -> bool {
     if value.value_type == ValueType::ValueBool {
         return unsafe {
@@ -197,6 +204,11 @@ pub fn as_function_object(value: &Value) -> *const ObjectFunction {
 }
 
 #[inline(always)]
+pub fn as_native_function_object(value: &Value) -> *const ObjectNativeFunction {
+    as_object(value) as *const ObjectNativeFunction
+}
+
+#[inline(always)]
 pub fn make_bool_value(value: bool) -> Value {
     Value {
         value_type: ValueType::ValueBool,
@@ -238,7 +250,21 @@ pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mu
 }
 
 pub fn make_function_value(function: *mut ObjectFunction) -> Value {
-    Value { value_type: ValueType::ValueObject, value_as: ValueUnion{object: function as *mut Object} }
+    Value {
+        value_type: ValueType::ValueObject,
+        value_as: ValueUnion {
+            object: function as *mut Object
+        }
+    }
+}
+
+pub fn make_native_function_value(function: *mut ObjectNativeFunction) -> Value {
+    Value {
+        value_type: ValueType::ValueObject,
+        value_as: ValueUnion {
+            object: function as *mut Object
+        }
+    }
 }
 
 pub type ValueArray = Vec<Value>;
@@ -288,6 +314,10 @@ fn print_object(value: &Value) {
                     return;
                 }
                 print!("<fn {}>", object_function.name);
+            },
+            ObjectType::ObjNativeFunction => {
+                let object_function = &*(object_ptr as *const ObjectNativeFunction);
+                print!("<native fn {}>", object_function.name);
             }
         }
     }

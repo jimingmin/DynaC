@@ -1,8 +1,11 @@
+use crate::value::{Value, ValueArray};
+
 #[repr(C)]
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub enum ObjectType {
     ObjString,
     ObjFunction,
+    ObjNativeFunction,
 }
 
 #[repr(C)]
@@ -11,6 +14,9 @@ pub struct Object {
     pub obj_type: ObjectType,
 }
 
+pub trait NativeObject {
+    fn run(&self, args: &Option<ValueArray>) -> Result<Value, String>;
+}
 
 impl PartialEq for Object {
     fn eq(&self, other: &Object) -> bool {
