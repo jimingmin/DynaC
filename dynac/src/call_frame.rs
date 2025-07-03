@@ -1,9 +1,9 @@
 use std::{cell::{Ref, RefCell, RefMut, UnsafeCell}, ptr::NonNull, rc::Rc};
 use std::sync::Once;
-use crate::{constants::MAX_STACK_SIZE, objects::object_function::ObjectFunction, value::{self, Value}};
+use crate::{constants::MAX_STACK_SIZE, objects::{object::{self, Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction}, value::{self, Value}};
 
 pub struct CallFrame {
-    function: *mut ObjectFunction,
+    callalbe_object: *mut Object,
     ip: usize,
     stack_base: NonNull<Value>,
     stack_base_offset: usize,
@@ -25,7 +25,7 @@ fn get_shared_function() -> &'static Rc<RefCell<ObjectFunction>> {
 impl CallFrame {
     pub fn new(stack_base: NonNull<Value>, stack_base_offset: usize) -> Self {
         CallFrame {
-            function: std::ptr::null_mut(),
+            callalbe_object: std::ptr::null_mut(),
             ip: 0,
             stack_base,
             stack_base_offset,
@@ -34,15 +34,26 @@ impl CallFrame {
     }
 
     #[inline(always)]
-    pub fn set_function(&mut self, function: *mut ObjectFunction) {
+    pub fn set_callable_object(&mut self, object: *mut Object) {
         //ObjectFunction::new(0, String::new());
         //let fun = Rc::new(RefCell::new(ObjectFunction::new(0, String::new())));
-        self.function = function
+        self.callalbe_object = object
     }
 
     #[inline(always)]
     pub fn function(&mut self) -> &mut ObjectFunction {
-        unsafe { &mut *self.function }
+        assert!((unsafe { &*self.callalbe_object} ).obj_type == ObjectType::ObjFunction);
+        unsafe { &mut *(self.callalbe_object as *mut ObjectFunction) }
+    }
+
+    #[inline(always)]
+    pub fn closure(&mut self) -> &mut ObjectClosure {
+        assert!((unsafe { &*self.callalbe_object} ).obj_type == ObjectType::ObjClosure);
+        unsafe { &mut *(self.callalbe_object as *mut ObjectClosure) }
+    }
+
+    pub fn object_type(&self) -> ObjectType {
+        (unsafe { &*self.callalbe_object} ).obj_type.clone()
     }
 
     #[inline(always)]
@@ -57,9 +68,9 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn get_stack_value(&self, offset: usize) -> &Value {
-        assert!(self.stack_top_pos + offset + 1 < MAX_STACK_SIZE);
+        assert!(self.stack_top_pos + offset < MAX_STACK_SIZE);
         unsafe {
-            &*self.stack_base.as_ptr().add(offset + 1)
+            &*self.stack_base.as_ptr().add(offset)
         }
     }
 

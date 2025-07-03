@@ -1,6 +1,6 @@
 use std::{cell::{RefCell, RefMut}, ptr::NonNull, rc::Rc};
 
-use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_closure_object, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_closure, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
 use crate::objects::object_manager::ObjectManager;
 
 pub struct VM {
@@ -71,7 +71,7 @@ impl VM {
             // frame.set_function(function.clone());
             // self.frames.push(frame);
 
-            self.call(function_ptr, 0);
+            self.call_function(function_ptr, 0);
         } else {
             println!("Compile Error!");
             return InterpretResult::InterpretCompileError;
@@ -98,7 +98,14 @@ impl VM {
     }
 
     fn current_chunk(&mut self) -> &mut Box<Chunk> {
-        &mut self.current_frame().function().chunk
+        if self.current_frame().object_type() == ObjectType::ObjFunction {
+            &mut self.current_frame().function().chunk
+        } else if self.current_frame().object_type() == ObjectType::ObjClosure {
+            &mut self.current_frame().closure().function.chunk
+        } else {
+            unreachable!()
+        }
+        
         // RefMut::map(self.current_frame().function(), |f| {
         //     &mut f.chunk
         // })
@@ -145,7 +152,7 @@ impl VM {
     fn call_value(&mut self, callee: Value, argument_count: u8) -> bool {
         if is_object(&callee) {
             if is_function(&callee) {
-                return self.call(as_function_object(&callee) as *mut ObjectFunction, argument_count);
+                return self.call_function(as_function_object(&callee) as *mut ObjectFunction, argument_count);
             } else if is_native_function(&callee) {
                 let native_function = as_native_function_object(&callee);
                 let result = (unsafe { &*native_function }).invoke(&None);
@@ -160,6 +167,9 @@ impl VM {
                         return false;
                     }
                 }
+            } else if is_closure(&callee) {
+                let mut closure = unsafe { Box::from_raw(as_closure_object(&callee) as *mut ObjectClosure) };
+                return self.call_closure(closure, argument_count);
             }
 
         }
@@ -167,7 +177,7 @@ impl VM {
         false
     }
 
-    fn call(&mut self, function: *mut ObjectFunction, argument_count: u8) -> bool {
+    fn call_function(&mut self, function: *mut ObjectFunction, argument_count: u8) -> bool {
         let arity = unsafe { &(*function) }.arity;
         if arity != argument_count {
             self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
@@ -191,7 +201,27 @@ impl VM {
         //         }
         //     }
         // }
-        frame.set_function(function);
+        frame.set_callable_object(function as *mut Object);
+        self.frames.push(Box::new(frame));
+
+        true
+    }
+
+    fn call_closure(&mut self, closure: Box<ObjectClosure>, argument_count: u8) -> bool {
+        let function = &closure.function;//std::mem::replace(&mut closure.function, Box::new(ObjectFunction::new(0, "".to_string())));
+        let arity = function.arity;
+        if arity != argument_count {
+            self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
+            return false;
+        }
+
+        if self.frames.len() >= MAX_FRAMES_SIIZE {
+            self.runtime_error("Stack overflow.");
+            return false;
+        }
+        let stack_base_pos = self.stack_top_pos - argument_count as usize - 1;
+        let mut frame = CallFrame::new(NonNull::new(&mut self.stack[stack_base_pos]).unwrap(), stack_base_pos);
+        frame.set_callable_object(Box::into_raw(closure) as *mut Object);
         self.frames.push(Box::new(frame));
 
         true
@@ -426,6 +456,16 @@ impl VM {
                         return self.report("There are not enough bytes to read a short.");
                     }
                 }
+                Some(chunk::OpCode::Closure) => {
+                    if let Some(function_index) = self.read_constant() {
+                        let object_function = as_function_object(&function_index) as *mut ObjectFunction;
+                        let closure_object = Box::new(ObjectClosure::new(unsafe { Box::from_raw(object_function) }));
+                        let closure_object_value = make_closure_value(Box::into_raw(closure_object));
+                        self.push(closure_object_value);
+                    } else {
+                        return self.report("There are not enough bytes to read a short.");
+                    }
+                }
                 Some(chunk::OpCode::Return) => {
                     let result = self.pop();
                     let stack_top_pos = self.current_frame().get_stack_base_offset();
@@ -450,8 +490,7 @@ impl VM {
         {
             let frame = self.current_frame();
             let ip = *frame.ip();
-            let function = frame.function();
-            let chunk = function.chunk();
+            let chunk = self.current_chunk();
             
             if ip + 1 < chunk.len() {
                 let mut short: u16 = 0;
@@ -471,8 +510,7 @@ impl VM {
         {
             let frame = self.current_frame();
             let ip = *frame.ip();
-            let function = frame.function();
-            let chunk = function.chunk();
+            let chunk = self.current_chunk();
 
             if ip < chunk.len() {
                 result = chunk.read_from_offset(ip);
@@ -490,7 +528,7 @@ impl VM {
             Some(byte) => byte,
             None => return None,
         };
-        let chunk = &self.current_frame().function().chunk;
+        let chunk = self.current_chunk();
         Some(*chunk.get_constant(instruction as usize))
     }
 
@@ -576,8 +614,7 @@ impl VM {
         //unsafe {
             let frame = self.current_frame();
             let instruction_index = *frame.ip() - 1;
-            let function = frame.function();
-            let chunk = function.chunk();
+            let chunk = self.current_chunk();
             if let Some(instruction) = chunk.read_from_offset(instruction_index) {
                 if let Some(line) = chunk.read_line_from_offset(instruction as usize) {
                     //eprintln!("[line {}] in script", line);
@@ -801,7 +838,7 @@ mod tests {
             }
             
             var start = clock();
-            var result = fib(10);
+            var result = fib(5);
             print result;
             var end = clock();
             print end - start;");

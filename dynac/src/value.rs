@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::objects::{object::{self, Object, ObjectType}, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_native_function::ObjectNativeFunction, object_string::ObjectString};
+use crate::objects::{object::{self, Object, ObjectType}, object_closure::ObjectClosure, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_native_function::ObjectNativeFunction, object_string::ObjectString};
 use crate::table::Table;
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
@@ -154,6 +154,13 @@ pub fn is_native_function(value: &Value) -> bool {
 }
 
 #[inline(always)]
+pub fn is_closure(value: &Value) -> bool {
+    unsafe {
+        is_object(value) && (*as_object(value)).obj_type == ObjectType::ObjClosure
+    }
+}
+
+#[inline(always)]
 pub fn as_bool(value: &Value) -> bool {
     if value.value_type == ValueType::ValueBool {
         return unsafe {
@@ -206,6 +213,11 @@ pub fn as_function_object(value: &Value) -> *const ObjectFunction {
 #[inline(always)]
 pub fn as_native_function_object(value: &Value) -> *const ObjectNativeFunction {
     as_object(value) as *const ObjectNativeFunction
+}
+
+#[inline(always)]
+pub fn as_closure_object(value: &Value) -> *const ObjectClosure {
+    as_object(value) as *const ObjectClosure
 }
 
 #[inline(always)]
@@ -267,6 +279,15 @@ pub fn make_native_function_value(function: *mut ObjectNativeFunction) -> Value 
     }
 }
 
+pub fn make_closure_value(closure: *mut ObjectClosure) -> Value {
+    Value {
+        value_type: ValueType::ValueObject,
+        value_as: ValueUnion {
+            object: closure as *mut Object
+        }
+    }
+}
+
 pub type ValueArray = Vec<Value>;
 
 pub fn print_value(value: &Value) {
@@ -318,6 +339,10 @@ fn print_object(value: &Value) {
             ObjectType::ObjNativeFunction => {
                 let object_function = &*(object_ptr as *const ObjectNativeFunction);
                 print!("<native fn {}>", object_function.name);
+            },
+            ObjectType::ObjClosure => {
+                let closure = &*(object_ptr as *const ObjectClosure);
+                print!("<closure {}>", closure.function.name)
             }
         }
     }

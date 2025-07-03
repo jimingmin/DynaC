@@ -29,6 +29,7 @@ pub enum OpCode {
     Jump,
     Loop,
     Call,
+    Closure,
     Return,
     //Unknown(u8),
 }
@@ -61,6 +62,7 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::Jump as u8 as usize] = Some(OpCode::Jump);
     arr[OpCode::Loop as u8 as usize] = Some(OpCode::Loop);
     arr[OpCode::Call as u8 as usize] = Some(OpCode::Call);
+    arr[OpCode::Closure as u8 as usize] = Some(OpCode::Closure);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr
 };

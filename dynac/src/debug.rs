@@ -1,5 +1,6 @@
 use crate::chunk;
 use crate::value;
+use crate::value::print_value;
 
 pub fn disassemble_chunk(chunk: &chunk::Chunk, name: &str) {
     println!("== {} ==", name);
@@ -65,6 +66,14 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, offset: usize) -> usize {
         Some(op) if matches!(op,
             chunk::OpCode::Loop) => {
             jump_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), -1, chunk, offset)
+        }
+        Some(op) if matches!(op,
+            chunk::OpCode::Closure) => {
+            let constant = chunk.read_from_offset(offset + 1).unwrap();
+            println!("{:<16} {:>4}", "Closure", constant);
+            print_value(chunk.get_constant(constant as usize));
+            println!();
+            offset + 2
         }
         _ => {
             println!("Unknown opcode {}", &chunk::OpCode::byte_to_string(&instruction).to_string());/*  */

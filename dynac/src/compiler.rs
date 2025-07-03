@@ -218,14 +218,6 @@ impl<'a> Parser<'a> {
             intern_strings,
         });
         parser.init_compiler(FunctionType::Script);
-        // the compiler sets aside stack slot zero that stores the function being called
-        parser.current_locals_mut().push(Local {
-            name: Token {
-                token_type: TokenType::Eof,
-                value: "",
-                line: 0,
-            }, 
-            depth: 0 });
         parser
     }
 
@@ -345,6 +337,15 @@ impl<'a> Parser<'a> {
         if compiler.function_type != FunctionType::Script {
             compiler.function.name = self.previous.value.to_string();
         }
+
+        // the compiler sets aside stack slot zero that stores the function being called
+        compiler.locals.push(Local {
+            name: Token {
+                token_type: TokenType::Eof,
+                value: "",
+                line: 0,
+            }, 
+            depth: 0 });
         self.compilers.push(compiler);
     }
 
@@ -521,7 +522,8 @@ impl<'a> Parser<'a> {
         let object_function = self.end_compiler();
         let object_function_ptr = Box::into_raw(object_function.expect("Unexpected function object."));
         let function_constant_index = self.make_constant(make_function_value(object_function_ptr));
-        self.emit_bytes(OpCode::Constant.to_byte(), function_constant_index);
+        //self.emit_bytes(OpCode::Constant.to_byte(), function_constant_index);
+        self.emit_bytes(OpCode::Closure.to_byte(), function_constant_index);
     }
 
     fn argument_list(&mut self) -> u8 {
@@ -576,7 +578,7 @@ impl<'a> Parser<'a> {
     fn named_variable(&mut self, name: Token, can_assign: bool) {
         let mut opcode_get: u8 = OpCode::GetLocal.to_byte();
         let mut opcode_set: u8 = OpCode::SetLocal.to_byte();
-        let mut index = self.resove_local(&name);
+        let mut index = self.resolve_local(&name);
         if index == -1 { // global variable
             index = self.identifier_constant(name) as i32;
             opcode_get = OpCode::GetGlobal.to_byte();
@@ -591,7 +593,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn resove_local(&mut self, name: &Token) -> i32 {
+    fn resolve_local(&mut self, name: &Token) -> i32 {
         let current_locals = self.current_locals();
         for (index, local) in current_locals.iter().enumerate().rev() {
             if Self::identifier_equal(&name, &local.name) {
@@ -1022,7 +1024,8 @@ mod tests {
         assert!(chunk.read_from_offset(13).unwrap() == OpCode::Equal.to_byte());
         assert!(chunk.read_from_offset(14).unwrap() == OpCode::Not.to_byte());
         assert!(chunk.read_from_offset(15).unwrap() == OpCode::Pop.to_byte());
-        assert!(chunk.read_from_offset(16).unwrap() == OpCode::Return.to_byte());
+        assert!(chunk.read_from_offset(16).unwrap() == OpCode::Nil.to_byte());
+        assert!(chunk.read_from_offset(17).unwrap() == OpCode::Return.to_byte());
     }
 
     #[test]
