@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::objects::{object::{self, Object, ObjectType}, object_closure::ObjectClosure, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_native_function::ObjectNativeFunction, object_string::ObjectString};
+use crate::objects::{object::{self, Object, ObjectType}, object_closure::ObjectClosure, object_function::{self, ObjectFunction}, object_manager::ObjectManager, object_native_function::ObjectNativeFunction, object_string::ObjectString, object_upvalue::ObjectUpvalue};
 use crate::table::Table;
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
@@ -343,6 +343,10 @@ fn print_object(value: &Value) {
             ObjectType::ObjClosure => {
                 let closure = &*(object_ptr as *const ObjectClosure);
                 print!("<closure {}>", closure.function.name)
+            },
+            ObjectType::ObjUpvalue => {
+                let upvalue = &*(object_ptr as *const ObjectUpvalue);
+                print!("<upvalue>")
             }
         }
     }

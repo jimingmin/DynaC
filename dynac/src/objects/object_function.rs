@@ -6,6 +6,7 @@ pub struct ObjectFunction {
     pub arity: u8,
     pub chunk: Box<Chunk>,
     pub name: String,
+    pub upvalue_count: usize,
 }
 
 impl ObjectFunction {
@@ -13,7 +14,12 @@ impl ObjectFunction {
         ObjectFunction {
                 object: Object {
                     obj_type: ObjectType::ObjFunction,
-                }, arity, chunk: Box::new(Chunk::new()), name}
+                },
+                arity,
+                chunk: Box::new(Chunk::new()),
+                name,
+                upvalue_count: 0,
+            }
     }
 
     pub fn chunk(&self) -> &Box<Chunk> {

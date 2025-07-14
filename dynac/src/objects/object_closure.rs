@@ -1,10 +1,11 @@
-use crate::objects::{object::{Object, ObjectType}, object_function::ObjectFunction};
+use crate::objects::{object::{Object, ObjectType}, object_function::ObjectFunction, object_upvalue::ObjectUpvalue};
 
 
 #[repr(C)]
 pub struct ObjectClosure {
     pub object: Object,
     pub function: Box<ObjectFunction>,
+    pub upvalues: Vec<ObjectUpvalue>,
 }
 
 impl ObjectClosure {
@@ -14,6 +15,7 @@ impl ObjectClosure {
                 obj_type: ObjectType::ObjClosure,
             },
             function,
+            upvalues: vec![],
         }
     }
 }

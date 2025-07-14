@@ -7,6 +7,7 @@ pub enum ObjectType {
     ObjFunction,
     ObjNativeFunction,
     ObjClosure,
+    ObjUpvalue,
 }
 
 #[repr(C)]

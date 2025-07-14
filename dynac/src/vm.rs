@@ -1,6 +1,6 @@
 use std::{cell::{RefCell, RefMut}, ptr::NonNull, rc::Rc};
 
-use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_closure_object, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_closure, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString, object_upvalue::ObjectUpvalue}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_closure_object, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_closure, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
 use crate::objects::object_manager::ObjectManager;
 
 pub struct VM {
@@ -406,6 +406,18 @@ impl VM {
                         return self.report("Unknown local variable.");
                     }
                 }
+                Some(chunk::OpCode::GetUpvalue) => {
+                    let slot = self.read_byte().unwrap();
+                    let clousre = self.current_frame().closure();
+                    let object_upvalue = clousre.upvalues.get(slot as usize).unwrap();
+                    //let object_upvalue = self.current_frame().closure().upvalues.get(slot as usize).unwrap();
+                    let upvalue = unsafe { *object_upvalue.location.as_ptr() };
+                    self.push(upvalue);
+                }
+                Some(chunk::OpCode::SetUpvalue) => {
+                    let slot = self.read_byte().unwrap();
+                    unsafe { *self.current_frame().closure().upvalues.get_mut(slot as usize).unwrap().location.as_ptr() = self.peek().unwrap() };
+                }
                 Some(chunk::OpCode::JumpIfFalse) => {
                     if let Some(offset) = self.read_short() {
                         if let Some(value) = self.peek() {
@@ -459,7 +471,20 @@ impl VM {
                 Some(chunk::OpCode::Closure) => {
                     if let Some(function_index) = self.read_constant() {
                         let object_function = as_function_object(&function_index) as *mut ObjectFunction;
-                        let closure_object = Box::new(ObjectClosure::new(unsafe { Box::from_raw(object_function) }));
+                        let mut closure_object = Box::new(ObjectClosure::new(unsafe { Box::from_raw(object_function) }));
+                        let upvalue_count = closure_object.function.upvalue_count;
+                        for _ in 0..upvalue_count {
+                            let is_local = self.read_byte().unwrap();
+                            let index = self.read_byte().unwrap();
+                            if is_local == 0 {
+                                let upvalues = &mut self.current_frame().closure().upvalues;
+                                closure_object.upvalues.push(upvalues.get(index as usize).unwrap().clone());
+                            } else {
+                                let slot = NonNull::new(&mut self.stack[index as usize]).unwrap();
+                                let upvalue = Self::capture_upvalue(slot);
+                                closure_object.upvalues.push(upvalue);
+                            }
+                        }
                         let closure_object_value = make_closure_value(Box::into_raw(closure_object));
                         self.push(closure_object_value);
                     } else {
@@ -598,6 +623,10 @@ impl VM {
             Ok(InterpretResult::InterpretOk)
     }
 
+    fn capture_upvalue(slot: NonNull<Value>) -> ObjectUpvalue {
+        ObjectUpvalue::new(slot)
+    }
+
     fn report(&mut self, message: &str) -> Result<InterpretResult, String> {
         self.report_runtime_error(message)
     }
@@ -711,7 +740,7 @@ mod tests {
     #[test]
     fn test_print_local_var() {
         let mut vm = VM::new();
-        assert!(vm.interpret("{var a = \"hello world!\"; print a;}") == InterpretResult::InterpretOk);
+        assert!(vm.interpret("{var a = \"hello world!\"; a = \"111\"; print a;}") == InterpretResult::InterpretOk);
         assert!(vm.interpret("{
                                 var a = \"the first\";
                                 {
@@ -842,6 +871,21 @@ mod tests {
             print result;
             var end = clock();
             print end - start;");
+        assert!(result == InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_closure() {
+        let mut vm = VM::new();
+        let result = vm.interpret("
+            fn outer() {
+                var x = \"outside\";
+                fn inner() {
+                    print x;
+                }
+                inner();
+            }
+            outer();");
         assert!(result == InterpretResult::InterpretOk);
     }
 }

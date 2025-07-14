@@ -17,6 +17,12 @@ struct Local<'a> {
     depth: i32,
 }
 
+#[derive(Clone)]
+struct Upvalue {
+    index: usize,
+    is_local: bool,
+}
+
 #[derive(PartialEq)]
 enum FunctionType {
     Function,
@@ -27,6 +33,7 @@ struct Compiler<'a> {
     function: Box<ObjectFunction>,
     function_type: FunctionType,
     locals: Vec<Local<'a>>,
+    upvalues: Vec<Upvalue>,
     scope_depth: i32,
 }
 
@@ -36,6 +43,7 @@ impl<'a> Compiler<'a> {
             function: Box::new(ObjectFunction::new(0, String::new())),
             function_type,
             locals: vec![],
+            upvalues: vec![],
             scope_depth: 0
         }
     }    
@@ -235,6 +243,14 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::Eof, "Expect end of expression.");
         
         return self.end_compiler();
+    }
+
+    fn specific_compiler(&self, compiler_index: usize) -> &Compiler<'a> {
+        self.compilers.get(compiler_index).expect("compiler index is invalid.")
+    }
+
+    fn specific_compiler_mut(&mut self, compiler_index: usize) -> &mut Compiler<'a> {
+        self.compilers.get_mut(compiler_index).expect("compiler index is invalid.")
     }
 
     fn current_compiler(&self) -> &Compiler<'a> {
@@ -519,11 +535,19 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::LeftBrace, "Expect '{' before function body.");
         self.block();
 
-        let object_function = self.end_compiler();
-        let object_function_ptr = Box::into_raw(object_function.expect("Unexpected function object."));
+        let upvalues = self.current_compiler().upvalues.clone();
+
+        let mut object_function = self.end_compiler().expect("Unexpected function object.");
+        object_function.upvalue_count = upvalues.len();
+        let object_function_ptr = Box::into_raw(object_function);
         let function_constant_index = self.make_constant(make_function_value(object_function_ptr));
         //self.emit_bytes(OpCode::Constant.to_byte(), function_constant_index);
         self.emit_bytes(OpCode::Closure.to_byte(), function_constant_index);
+
+        for upvalue in upvalues.iter() {
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index as u8);
+        }
     }
 
     fn argument_list(&mut self) -> u8 {
@@ -578,11 +602,18 @@ impl<'a> Parser<'a> {
     fn named_variable(&mut self, name: Token, can_assign: bool) {
         let mut opcode_get: u8 = OpCode::GetLocal.to_byte();
         let mut opcode_set: u8 = OpCode::SetLocal.to_byte();
-        let mut index = self.resolve_local(&name);
-        if index == -1 { // global variable
-            index = self.identifier_constant(name) as i32;
-            opcode_get = OpCode::GetGlobal.to_byte();
-            opcode_set = OpCode::SetGlobal.to_byte();
+        let current_compiler_index = self.compilers.len() - 1;
+        let mut index = self.resolve_local(current_compiler_index, &name);
+        if index == -1 {
+            index = self.resolve_upvalue(current_compiler_index, &name);
+            if index == -1 { // global variable
+                index = self.identifier_constant(name) as i32;
+                opcode_get = OpCode::GetGlobal.to_byte();
+                opcode_set = OpCode::SetGlobal.to_byte();
+            } else { // upvalue
+                opcode_get = OpCode::GetUpvalue.to_byte();
+                opcode_set = OpCode::SetUpvalue.to_byte();
+            }
         }
 
         if can_assign && self.match_token(TokenType::Equal) {
@@ -593,9 +624,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn resolve_local(&mut self, name: &Token) -> i32 {
-        let current_locals = self.current_locals();
-        for (index, local) in current_locals.iter().enumerate().rev() {
+    fn resolve_local(&mut self, compiler_index: usize, name: &Token) -> i32 {
+        let compiler = self.specific_compiler(compiler_index);
+        let locals = &compiler.locals;
+        for (index, local) in locals.iter().enumerate().rev() {
             if Self::identifier_equal(&name, &local.name) {
                 if local.depth == -1 { // it's not fully defined
                     self.error("Can't read local variable in its own initializer.");
@@ -609,6 +641,35 @@ impl<'a> Parser<'a> {
 
     fn identifier_equal(left: &Token, right: &Token) -> bool {
         left.token_type == right.token_type && left.value == right.value
+    }
+
+    fn resolve_upvalue(&mut self, compiler_index: usize, name: &Token) -> i32 {
+        if compiler_index == 0 {
+            return -1;
+        }
+        let local = self.resolve_local(compiler_index - 1, name);
+        if local != -1 {
+            return self.add_upvalue(compiler_index, local, true) as i32;
+        }
+
+        let upvalue = self.resolve_upvalue(compiler_index - 1, name);
+        if upvalue != -1 {
+            return self.add_upvalue(compiler_index, upvalue, false) as i32;
+        }
+
+        return -1;
+    }
+
+    fn add_upvalue(&mut self, compiler_index: usize, local: i32, is_local: bool) -> usize {
+        let mut compiler = self.specific_compiler_mut(compiler_index);
+        for (index, upvalue) in compiler.upvalues.iter().enumerate() {
+            if upvalue.is_local == is_local && upvalue.index == local as usize {
+                return index;
+            }
+        }
+        compiler.upvalues.push(Upvalue { index: local as usize, is_local });
+        compiler.function.upvalue_count = compiler.upvalues.len();
+        return compiler.function.upvalue_count - 1;
     }
 
     fn and(&mut self, can_assign: bool) {
