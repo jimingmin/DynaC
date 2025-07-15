@@ -31,10 +31,10 @@ impl Drop for VM {
                 let object_ptr = Box::from_raw(object);
                 if object_ptr.obj_type == ObjectType::ObjString {
                     let object_string = &*(object as *const ObjectString);
-                    print!("{}", object_string.content);
+                    println!("VM is droping object:{}", object_string.content);
                 } else if object_ptr.obj_type == ObjectType::ObjFunction {
                     let object_function = &*(object as *const ObjectFunction);
-                    print!("{}", object_function.name);
+                    println!("VM is droping object:{}", object_function.name);
                 }
             }
         }
@@ -480,7 +480,7 @@ impl VM {
                                 let upvalues = &mut self.current_frame().closure().upvalues;
                                 closure_object.upvalues.push(upvalues.get(index as usize).unwrap().clone());
                             } else {
-                                let slot = NonNull::new(&mut self.stack[index as usize]).unwrap();
+                                let slot = unsafe { self.current_frame().get_stack_base().add(index as usize) };
                                 let upvalue = Self::capture_upvalue(slot);
                                 closure_object.upvalues.push(upvalue);
                             }
