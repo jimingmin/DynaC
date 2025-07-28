@@ -44,6 +44,101 @@ impl Clone for Value {
     }
 }
 
+impl Value {
+    pub fn deep_clone(&self) -> Self {
+        unsafe {
+            match self.value_type {
+                ValueType::ValueBool => Value {
+                    value_type: self.value_type,
+                    value_as: ValueUnion {
+                        boolean: self.value_as.boolean,
+                    },
+                },
+                ValueType::ValueNil => Value {
+                    value_type: self.value_type,
+                    value_as: ValueUnion {
+                        // Assume Nil is unit-like
+                        boolean: false, // or any dummy value
+                    },
+                },
+                ValueType::ValueNumber => Value {
+                    value_type: self.value_type,
+                    value_as: ValueUnion {
+                        number: self.value_as.number,
+                    },
+                },
+                ValueType::ValueObject => {
+                    // Deep copy the object if it's not null
+                    if !self.value_as.object.is_null() {
+                        let object = &*self.value_as.object;
+                        match object.obj_type {
+                            ObjectType::ObjString => {
+                                let original =  &*(self.value_as.object as *const ObjectString);
+                                let cloned = original.clone();
+                                Value {
+                                    value_type: self.value_type,
+                                    value_as: ValueUnion {
+                                        object: Box::into_raw(Box::new(cloned)) as *mut Object,
+                                    },
+                                }
+                            },
+                            ObjectType::ObjFunction => {
+                                let original = &*(self.value_as.object as *const ObjectFunction);
+                                let cloned = original.clone();
+                                Value {
+                                    value_type: self.value_type,
+                                    value_as: ValueUnion {
+                                        object: Box::into_raw(Box::new(cloned)) as *mut Object,
+                                    },
+                                }
+                            },
+                            ObjectType::ObjNativeFunction => {
+                                let original = &*(self.value_as.object as *const ObjectNativeFunction);
+                                let cloned = original.clone();
+                                Value {
+                                    value_type: self.value_type,
+                                    value_as: ValueUnion {
+                                        object: Box::into_raw(Box::new(cloned)) as *mut Object,
+                                    },
+                                }
+                            },
+                            ObjectType::ObjClosure => {
+                                let original = &*(self.value_as.object as *const ObjectClosure);
+                                let cloned = original.clone();
+                                Value {
+                                    value_type: self.value_type,
+                                    value_as: ValueUnion {
+                                        object: Box::into_raw(Box::new(cloned)) as *mut Object,
+                                    },
+                                }
+                            },
+                            ObjectType::ObjUpvalue => {
+                                let original = &*(self.value_as.object as *const ObjectUpvalue);
+                                let cloned = original.clone();
+                                Value {
+                                    value_type: self.value_type,
+                                    value_as: ValueUnion {
+                                        object: Box::into_raw(Box::new(cloned)) as *mut Object,
+                                    },
+                                }
+                            },
+                        }
+
+                    } else {
+                        // Handle null pointer (shouldn't happen if ValueObject is active)
+                        Value {
+                            value_type: self.value_type,
+                            value_as: ValueUnion {
+                                object: std::ptr::null_mut(),
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         if self.value_type != other.value_type {
@@ -284,6 +379,16 @@ pub fn make_closure_value(closure: *mut ObjectClosure) -> Value {
         value_type: ValueType::ValueObject,
         value_as: ValueUnion {
             object: closure as *mut Object
+        }
+    }
+}
+
+#[inline(always)]
+pub fn make_upvalue(upvalue: *mut ObjectUpvalue) -> Value {
+    Value {
+        value_type: ValueType::ValueNumber,
+        value_as: ValueUnion {
+            object: upvalue as *mut Object
         }
     }
 }

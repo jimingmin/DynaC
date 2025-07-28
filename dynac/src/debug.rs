@@ -49,6 +49,7 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, mut offset: usize) -> usize
             | chunk::OpCode::Not
             | chunk::OpCode::Print
             | chunk::OpCode::Pop
+            | chunk::OpCode::CloseUpvalue
             | chunk::OpCode::Return) => {
             simple_instruction(&chunk::OpCode::byte_to_string(&instruction).to_string(), offset)
         }

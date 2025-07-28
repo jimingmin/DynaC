@@ -1,6 +1,7 @@
 use crate::{chunk::Chunk, objects::object::{Object, ObjectType}};
 
 #[repr(C)]
+#[derive(Clone)]
 pub struct ObjectFunction {
     pub object: Object,
     pub arity: u8,

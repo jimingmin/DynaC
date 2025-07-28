@@ -15,6 +15,7 @@ pub struct Parser<'a> {
 struct Local<'a> {
     name: Token<'a>,
     depth: i32,
+    captured: bool,
 }
 
 #[derive(Clone)]
@@ -361,7 +362,8 @@ impl<'a> Parser<'a> {
                 value: "",
                 line: 0,
             }, 
-            depth: 0 });
+            depth: 0,
+            captured: false });
         self.compilers.push(compiler);
     }
 
@@ -498,7 +500,7 @@ impl<'a> Parser<'a> {
         // Set 'depth' to -1 in order to mark this variable uninitialized. If the variable
         // declaration expression has an initializer that is parsed correctly, the 'depth'
         // will be set to the scope depth of 'compiler'
-        self.current_locals_mut().push(Local { name: variable_name, depth: -1 });
+        self.current_locals_mut().push(Local { name: variable_name, depth: -1, captured: false });
     }
 
     // fn compiler_ptr(&mut self) -> *mut Compiler<'a> {
@@ -649,6 +651,8 @@ impl<'a> Parser<'a> {
         }
         let local = self.resolve_local(compiler_index - 1, name);
         if local != -1 {
+            let local_variable = self.specific_compiler_mut(compiler_index - 1).locals.get_mut(local as usize).unwrap();
+            local_variable.captured = true;
             return self.add_upvalue(compiler_index, local, true) as i32;
         }
 
@@ -755,11 +759,21 @@ impl<'a> Parser<'a> {
         loop {
             
             let current_locals = self.current_locals();
-            if current_locals.is_empty() || current_locals.last().unwrap().depth <= scope_depth {
+            if current_locals.is_empty() {
                 break;
             }
 
-            self.emit_byte(OpCode::Pop.to_byte());
+            let local = self.current_locals().last().unwrap();
+            if local.depth <= scope_depth {
+                break;
+            }
+
+            if local.captured {
+                self.emit_byte(OpCode::CloseUpvalue.to_byte());
+            } else {
+                self.emit_byte(OpCode::Pop.to_byte());
+            }
+            
             self.current_locals_mut().pop();
         }
     }

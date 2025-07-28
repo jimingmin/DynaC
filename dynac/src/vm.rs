@@ -1,6 +1,6 @@
 use std::{cell::{RefCell, RefMut}, ptr::NonNull, rc::Rc};
 
-use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString, object_upvalue::ObjectUpvalue}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_closure_object, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_closure, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, print_value, Value, ValueType, ValueUnion}};
+use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString, object_upvalue::ObjectUpvalue}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_closure_object, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_closure, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, make_upvalue, print_value, Value, ValueType, ValueUnion}};
 use crate::objects::object_manager::ObjectManager;
 
 pub struct VM {
@@ -10,6 +10,7 @@ pub struct VM {
     object_manager: Box<ObjectManager>,
     intern_strings: Box<Table>,
     globals: Box<Table>,
+    open_upvalues: Vec<ObjectUpvalue>,
 }
 
 #[derive(PartialEq)]
@@ -53,6 +54,7 @@ impl VM {
                 object_manager: Box::new(ObjectManager::new()),
                 intern_strings: Box::new(Table::new()),
                 globals: Box::new(Table::new()),
+                open_upvalues: vec![],
             })
     }
 
@@ -409,14 +411,16 @@ impl VM {
                 Some(chunk::OpCode::GetUpvalue) => {
                     let slot = self.read_byte().unwrap();
                     let clousre = self.current_frame().closure();
-                    let object_upvalue = clousre.upvalues.get(slot as usize).unwrap();
-                    //let object_upvalue = self.current_frame().closure().upvalues.get(slot as usize).unwrap();
-                    let upvalue = unsafe { *object_upvalue.location.as_ptr() };
+                    let upvalue_index = *clousre.upvalues.get(slot as usize).unwrap();
+                    let upvalue = self.get_upvalue(upvalue_index);
                     self.push(upvalue);
                 }
                 Some(chunk::OpCode::SetUpvalue) => {
                     let slot = self.read_byte().unwrap();
-                    unsafe { *self.current_frame().closure().upvalues.get_mut(slot as usize).unwrap().location.as_ptr() = self.peek().unwrap() };
+                    let clousre = self.current_frame().closure();
+                    let upvalue_index = *clousre.upvalues.get(slot as usize).unwrap();
+                    let value = self.peek().unwrap();
+                    self.set_upvalue(upvalue_index, value);
                 }
                 Some(chunk::OpCode::JumpIfFalse) => {
                     if let Some(offset) = self.read_short() {
@@ -481,8 +485,8 @@ impl VM {
                                 closure_object.upvalues.push(upvalues.get(index as usize).unwrap().clone());
                             } else {
                                 let slot = unsafe { self.current_frame().get_stack_base().add(index as usize) };
-                                let upvalue = Self::capture_upvalue(slot);
-                                closure_object.upvalues.push(upvalue);
+                                let upvalue_index = self.capture_upvalue(slot);
+                                closure_object.upvalues.push(upvalue_index);
                             }
                         }
                         let closure_object_value = make_closure_value(Box::into_raw(closure_object));
@@ -491,8 +495,15 @@ impl VM {
                         return self.report("There are not enough bytes to read a short.");
                     }
                 }
+                Some(chunk::OpCode::CloseUpvalue) => {
+                    let last = NonNull::new(&mut self.stack[self.stack_top_pos - 1]).unwrap();
+                    self.close_upvalues(last);
+                    self.pop();
+                }
                 Some(chunk::OpCode::Return) => {
                     let result = self.pop();
+                    let last = *self.current_frame().get_stack_base();
+                    self.close_upvalues(last);
                     let stack_top_pos = self.current_frame().get_stack_base_offset();
                     self.frames.pop();
                     if self.frames.is_empty() {
@@ -508,6 +519,14 @@ impl VM {
                 _ => return self.report("Unknown opcode"),
             }
         }
+    }
+
+    fn get_upvalue(&self, index: usize) -> Value {
+        unsafe { *self.open_upvalues.get(index).unwrap().location().as_ptr() }
+    }
+
+    fn set_upvalue(&mut self, index: usize, value: Value) {
+        unsafe { *self.open_upvalues.get(index).unwrap().location().as_ptr() = value }
     }
 
     fn read_short(&mut self) -> Option<u16> {
@@ -623,8 +642,34 @@ impl VM {
             Ok(InterpretResult::InterpretOk)
     }
 
-    fn capture_upvalue(slot: NonNull<Value>) -> ObjectUpvalue {
-        ObjectUpvalue::new(slot)
+    fn capture_upvalue(&mut self, slot: NonNull<Value>) -> usize {
+        let mut target_index = 0;
+        for (index, value) in self.open_upvalues.iter_mut().enumerate().rev() {
+            if slot == *value.location() {
+                target_index = index;
+                break;
+            } else if slot > *value.location() {
+                target_index = self.open_upvalues.len() - index;
+                self.open_upvalues.insert(target_index, ObjectUpvalue::new(slot));
+                break;
+            }
+        }
+        if self.open_upvalues.is_empty() {
+            self.open_upvalues.insert(target_index, ObjectUpvalue::new(slot));
+        }
+        target_index
+    }
+
+    fn close_upvalues(&mut self, last: NonNull<Value>) {
+        for value in self.open_upvalues.iter_mut().enumerate().rev() {
+            if value.1.location < last {
+                break;
+            }
+
+            value.1.closed = unsafe { value.1.location.as_ref().deep_clone() };//unsafe { *value.1.location.as_ptr().clone() };
+            let v = &mut value.1.closed;
+            value.1.location = NonNull::new(v).unwrap();
+        }
     }
 
     fn report(&mut self, message: &str) -> Result<InterpretResult, String> {
@@ -883,9 +928,35 @@ mod tests {
                 fn inner() {
                     print x;
                 }
-                inner();
+                return inner;
             }
-            outer();");
+            var closure = outer();
+            closure()");
         assert!(result == InterpretResult::InterpretOk);
     }
+
+    #[test]
+    fn test_closure_with_shared_variable() {
+        let mut vm = VM::new();
+        let result = vm.interpret("
+            var globalSet;
+            var globalGet;
+
+            fn main() {
+                var a = \"initial\";
+
+                fn set(value) { a = value; }
+                fn get() { print a; }
+
+                globalSet = set;
+                globalGet = get;
+            }
+
+            main();
+            globalSet(\"updated\");
+            globalGet();
+            globalSet(\"initial\");
+            globalGet();");
+        assert!(result == InterpretResult::InterpretOk);
+    }    
 }

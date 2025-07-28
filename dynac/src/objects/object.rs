@@ -1,7 +1,7 @@
 use crate::value::{Value, ValueArray};
 
 #[repr(C)]
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum ObjectType {
     ObjString,
     ObjFunction,
@@ -11,7 +11,7 @@ pub enum ObjectType {
 }
 
 #[repr(C)]
-#[derive(Hash, Clone)]
+#[derive(Hash, Clone, Copy)]
 pub struct Object {
     pub obj_type: ObjectType,
 }

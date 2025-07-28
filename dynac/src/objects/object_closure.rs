@@ -2,10 +2,11 @@ use crate::objects::{object::{Object, ObjectType}, object_function::ObjectFuncti
 
 
 #[repr(C)]
+#[derive(Clone)]
 pub struct ObjectClosure {
     pub object: Object,
     pub function: Box<ObjectFunction>,
-    pub upvalues: Vec<ObjectUpvalue>,
+    pub upvalues: Vec<usize>,
 }
 
 impl ObjectClosure {

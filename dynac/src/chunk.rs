@@ -32,6 +32,7 @@ pub enum OpCode {
     Loop,
     Call,
     Closure,
+    CloseUpvalue,
     Return,
     //Unknown(u8),
 }
@@ -67,6 +68,7 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::Loop as u8 as usize] = Some(OpCode::Loop);
     arr[OpCode::Call as u8 as usize] = Some(OpCode::Call);
     arr[OpCode::Closure as u8 as usize] = Some(OpCode::Closure);
+    arr[OpCode::CloseUpvalue as u8 as usize] = Some(OpCode::CloseUpvalue);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr
 };
@@ -91,6 +93,7 @@ impl OpCode {
     }
 }
 
+#[derive(Clone)]
 pub struct Chunk {
     code: Vec<u8>,
     lines: Vec<usize>,
