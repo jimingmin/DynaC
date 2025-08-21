@@ -1,57 +1,87 @@
-use std::{cell::RefCell, rc::{Rc, Weak}};
+use crate::objects::{
+    object::{Object, NativeObject},
+    object_string::ObjectString,
+    object_function::ObjectFunction,
+    object_closure::ObjectClosure,
+    object_native_function::ObjectNativeFunction,
+    object_upvalue::ObjectUpvalue,
+};
 
-use crate::{objects::object::{self, Object}, value::{as_mutable_object, is_object, Value}};
-
-
+#[allow(dead_code)]
 pub struct ObjectManager {
-    //size: usize,
     objects: Vec<*mut Object>,
 }
 
+#[allow(dead_code)]
 impl ObjectManager {
     pub fn new() -> Self {
-        ObjectManager{
-            //size: 0,
-            objects: vec![],//std::ptr::null_mut()
+        Self { objects: Vec::new() }
+    }
+
+    pub fn push_object(&mut self, obj: *mut Object) {
+        self.objects.push(obj);
+    }
+
+    pub fn alloc_string(&mut self, value: &str) -> *mut ObjectString {
+        let obj = Box::new(ObjectString::new(value));
+        let ptr = Box::into_raw(obj);
+        self.push_object(ptr as *mut Object);
+        ptr
+    }
+
+    pub fn alloc_function(&mut self, arity: usize, name: String) -> *mut ObjectFunction {
+        let obj = Box::new(ObjectFunction::new(arity as u8, name));
+        let ptr = Box::into_raw(obj);
+        self.push_object(ptr as *mut Object);
+        ptr
+    }
+
+    pub fn alloc_closure(&mut self, function: *mut ObjectFunction) -> *mut ObjectClosure {
+        let obj = Box::new(ObjectClosure::new(function));
+        let ptr = Box::into_raw(obj);
+        self.push_object(ptr as *mut Object);
+        ptr
+    }
+
+    pub fn alloc_native_function<T: NativeObject + 'static>(&mut self, name: String, arity: usize, native_obj: T) -> *mut ObjectNativeFunction {
+        let obj = Box::new(ObjectNativeFunction::new(name, arity as u8, native_obj));
+        let ptr = Box::into_raw(obj);
+        self.push_object(ptr as *mut Object);
+        ptr
+    }
+
+    pub fn alloc_upvalue(&mut self, location: *mut crate::value::Value) -> *mut ObjectUpvalue {
+        let obj = Box::new(ObjectUpvalue::new(location));
+        let ptr = Box::into_raw(obj);
+        self.push_object(ptr as *mut Object);
+        ptr
+    }
+
+    /// Iterate over all managed objects (for GC mark/sweep)
+    pub fn iter(&self) -> impl Iterator<Item = &*mut Object> {
+        self.objects.iter()
+    }
+
+    /// Remove a pointer from the manager (optional, for GC sweep)
+    pub fn remove_object(&mut self, ptr: *mut Object) {
+        if let Some(pos) = self.objects.iter().position(|&p| p == ptr) {
+            self.objects.swap_remove(pos);
         }
     }
 
-    pub fn push_object(&mut self, object: *mut Object) {
-        if self.objects.contains(&object) {
-            return;
+    /// Deallocate all objects (for VM shutdown or full sweep)
+    pub unsafe fn free_all(&mut self) {
+        for &ptr in &self.objects {
+            if !ptr.is_null() {
+                drop(Box::from_raw(ptr));
+            }
         }
-
-        self.objects.push(object);
-        // if !self.objects.is_null() {
-        //     unsafe {
-        //         (*object).next = self.objects;
-        //     }
-        // }
-        // self.size += 1;
-        // self.objects = object;
+        self.objects.clear();
     }
+}
 
-    pub fn push_object_value(&mut self, value: &mut Value) {
-        if is_object(value) {
-            self.push_object(as_mutable_object(value));
-        }
-    }
-
-    pub fn pop_object(&mut self) -> *mut Object {
-        if self.objects.is_empty() {
-            return std::ptr::null_mut();
-        }
-
-        self.objects.pop().unwrap()
-        // let object = self.objects;
-        // unsafe {
-        //     if !(*object).next.is_null() {
-        //         self.objects = (*self.objects).next;
-        //     } else {
-        //         self.objects = std::ptr::null_mut();
-        //     }
-        // }
-        // self.size -= 1;
-        // object
+impl Drop for ObjectManager {
+    fn drop(&mut self) {
+        unsafe { self.free_all(); }
     }
 }

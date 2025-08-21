@@ -1,6 +1,5 @@
-use std::{cell::{Ref, RefCell, RefMut, UnsafeCell}, ptr::NonNull, rc::Rc};
-use std::sync::Once;
-use crate::{constants::MAX_STACK_SIZE, objects::{object::{self, Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction}, value::{self, Value}};
+use std::ptr::NonNull;
+use crate::{constants::MAX_STACK_SIZE, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction}, value::{Value}};
 
 pub struct CallFrame {
     callalbe_object: *mut Object,
@@ -8,18 +7,6 @@ pub struct CallFrame {
     stack_base: NonNull<Value>,
     stack_base_offset: usize,
     stack_top_pos: usize,
-}
-
-static mut SHARED_FUNCTION: Option<Rc<RefCell<ObjectFunction>>> = None;
-static INIT: Once = Once::new();
-
-fn get_shared_function() -> &'static Rc<RefCell<ObjectFunction>> {
-    INIT.call_once(|| {
-        unsafe {
-            SHARED_FUNCTION = Some(Rc::new(RefCell::new(ObjectFunction::new(0, "".to_string()))));
-        }
-    });
-    unsafe { SHARED_FUNCTION.as_ref().unwrap() }
 }
 
 impl CallFrame {

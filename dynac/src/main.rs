@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::fs;
 use std::process;
 
@@ -15,7 +15,6 @@ mod table;
 mod call_frame;
 mod constants;
 
-use crate::objects::object::Object;
 
 fn repl() {
     let mut vm = vm::VM::new();

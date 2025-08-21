@@ -74,6 +74,7 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
 };
 
 #[allow(non_snake_case)]
+#[allow(dead_code)]
 impl OpCode {
     #[inline(always)]
     pub fn from_byte(byte: u8) -> Option<Self> {

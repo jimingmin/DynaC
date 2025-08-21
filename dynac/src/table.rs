@@ -8,6 +8,7 @@ pub struct Table {
 }
 
 
+#[allow(dead_code)]
 impl Table {
     // pub fn new() -> Rc<RefCell<Self>> {
     //     Rc::new(RefCell::new(Table { entries: HashMap::new() }))
@@ -20,7 +21,7 @@ impl Table {
     pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
         //let key = Rc::from((unsafe { &*object_string }).content.as_str());
         if value.value_type == ValueType::ValueObject {
-            let string = as_string_object(&value);
+            let _string = as_string_object(&value);
             //println!("insert key : {}, value : {}", key, unsafe {&(*string)}.content);
         }
         self.entries.insert(key, value)

@@ -1,6 +1,28 @@
-use std::{cell::{RefCell, RefMut}, ptr::NonNull, rc::Rc};
+use std::ptr::NonNull;
 
-use crate::{call_frame::CallFrame, chunk::{self, Chunk, OpCode}, compiler::{self, Parser}, constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE}, debug, objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::ObjectFunction, object_native_function::ObjectNativeFunction, object_string::ObjectString, object_upvalue::ObjectUpvalue}, std_mod::time::ClockTime, table::Table, value::{self, as_bool, as_closure_object, as_function_object, as_native_function_object, as_number, as_object, as_string_object, is_bool, is_closure, is_function, is_native_function, is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value, make_native_function_value, make_nil_value, make_numer_value, make_string_value, make_upvalue, print_value, Value, ValueType, ValueUnion}};
+use crate::{
+    call_frame::CallFrame,
+    chunk::{self, Chunk},
+    compiler::Parser,
+    constants::{MAX_FRAMES_SIIZE, MAX_STACK_SIZE},
+    debug,
+    objects::{
+        object::{Object, ObjectType},
+        object_closure::ObjectClosure,
+        object_function::ObjectFunction,
+        object_string::ObjectString,
+        object_upvalue::ObjectUpvalue,
+    },
+    std_mod::time::ClockTime,
+    table::Table,
+    value::{
+        as_bool, as_closure_object, as_function_object, as_native_function_object,
+        as_number, as_string_object, is_bool, is_closure, is_function, is_native_function, 
+        is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value,
+        make_native_function_value, make_nil_value, make_numer_value, make_string_value,
+        print_value, Value, ValueType, ValueUnion
+    },
+};
 use crate::objects::object_manager::ObjectManager;
 
 pub struct VM {
@@ -10,7 +32,7 @@ pub struct VM {
     object_manager: Box<ObjectManager>,
     intern_strings: Box<Table>,
     globals: Box<Table>,
-    open_upvalues: Vec<ObjectUpvalue>,
+    open_upvalues: Vec<*mut ObjectUpvalue>,
 }
 
 #[derive(PartialEq)]
@@ -22,22 +44,29 @@ pub enum InterpretResult {
 
 impl Drop for VM {
     fn drop(&mut self) {
-        loop {
-            let object = self.object_manager.pop_object();
-            if object.is_null() {
-                break;
-            }
+        // loop {
+        //     let object = self.object_manager.pop_object();
+        //     if object.is_null() {
+        //         break;
+        //     }
 
-            unsafe {
-                let object_ptr = Box::from_raw(object);
-                if object_ptr.obj_type == ObjectType::ObjString {
-                    let object_string = &*(object as *const ObjectString);
-                    println!("VM is droping object:{}", object_string.content);
-                } else if object_ptr.obj_type == ObjectType::ObjFunction {
-                    let object_function = &*(object as *const ObjectFunction);
-                    println!("VM is droping object:{}", object_function.name);
-                }
-            }
+        //     unsafe {
+        //         let object_ptr = Box::from_raw(object);
+        //         if object_ptr.obj_type == ObjectType::ObjString {
+        //             let object_string = &*(object as *const ObjectString);
+        //             println!("VM is droping string object:{}, addr:{:p}", object_string.content, &*object_ptr);
+        //         } else if object_ptr.obj_type == ObjectType::ObjFunction {
+        //             let object_function = &*(object as *const ObjectFunction);
+        //             println!("VM is droping function object:{}", object_function.name);
+        //         } else if object_ptr.obj_type == ObjectType::ObjClosure {
+        //             println!("VM is droping closure object");
+        //         } else if object_ptr.obj_type == ObjectType::ObjUpvalue {
+        //             println!("VM is droping upvalue object");
+        //         }
+        //     }
+        // }
+        unsafe {
+            self.object_manager.free_all();
         }
     }
 }
@@ -64,9 +93,8 @@ impl VM {
     }
 
     fn compile(&mut self, source: &str) -> InterpretResult {
-        let mut parser = Parser::new(&mut self.object_manager, &mut self.intern_strings);
-        if let Some(function) = parser.compile(source) {
-            let function_ptr = Box::into_raw(function);
+        let mut parser = Box::new(Parser::new(&mut self.object_manager, &mut self.intern_strings));
+        if let Some(function_ptr) = parser.compile(source) {
             self.push(make_function_value(function_ptr));
 
             // let mut frame = Box::new(CallFrame::new(NonNull::new(&mut self.stack[0]).unwrap()));
@@ -90,8 +118,8 @@ impl VM {
     }
 
     fn setup_standards(&mut self) {
-        let clock_function = Box::new(ObjectNativeFunction::new("clock".to_string(), 0, ClockTime::new()));
-        self.globals.insert("clock".to_string(), make_native_function_value(Box::into_raw(clock_function)));
+        let clock_ptr = self.object_manager.alloc_native_function("clock".to_string(), 0, ClockTime::new());
+        self.globals.insert("clock".to_string(), make_native_function_value(clock_ptr));
     }
 
     fn current_frame(&mut self) -> &mut CallFrame {
@@ -99,13 +127,22 @@ impl VM {
         &mut self.frames[current_frame_index]
     }
 
-    fn current_chunk(&mut self) -> &mut Box<Chunk> {
-        if self.current_frame().object_type() == ObjectType::ObjFunction {
-            &mut self.current_frame().function().chunk
-        } else if self.current_frame().object_type() == ObjectType::ObjClosure {
-            &mut self.current_frame().closure().function.chunk
-        } else {
-            unreachable!()
+    /// Get the current chunk for execution
+    /// # Safety
+    /// This function is safe because it only dereferences pointers that are guaranteed to be valid:
+    /// - The function pointer comes from a valid CallFrame
+    /// - The closure.function pointer comes from a valid closure
+    unsafe fn current_chunk(&mut self) -> &mut Box<Chunk> {
+        match self.current_frame().object_type() {
+            ObjectType::ObjFunction => {
+                let function = self.current_frame().function();
+                &mut (*function).chunk 
+            },
+            ObjectType::ObjClosure => {
+                let closure = self.current_frame().closure();
+                &mut (*closure.function).chunk 
+            },
+            _ => unreachable!()
         }
         
         // RefMut::map(self.current_frame().function(), |f| {
@@ -165,29 +202,29 @@ impl VM {
                         return true;
                     },
                     Err(message) => {
-                        self.runtime_error(&format!("Native function {} has exception {}.", (unsafe { &*native_function }).name, message));
+                        let _ = self.runtime_error(&format!("Native function {} has exception {}.", (unsafe { &*native_function }).name, message));
                         return false;
                     }
                 }
             } else if is_closure(&callee) {
-                let mut closure = unsafe { Box::from_raw(as_closure_object(&callee) as *mut ObjectClosure) };
-                return self.call_closure(closure, argument_count);
+                let closure_ptr = as_closure_object(&callee) as *mut ObjectClosure;
+                return self.call_closure(closure_ptr, argument_count);
             }
 
         }
-        self.report("Can only call functions and classes.");
+        let _ = self.report("Can only call functions and classes.");
         false
     }
 
     fn call_function(&mut self, function: *mut ObjectFunction, argument_count: u8) -> bool {
         let arity = unsafe { &(*function) }.arity;
         if arity != argument_count {
-            self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
+            let _ = self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
             return false;
         }
 
         if self.frames.len() >= MAX_FRAMES_SIIZE {
-            self.runtime_error("Stack overflow.");
+            let _ = self.runtime_error("Stack overflow.");
             return false;
         }
         let stack_base_pos = self.stack_top_pos - argument_count as usize - 1;
@@ -209,21 +246,21 @@ impl VM {
         true
     }
 
-    fn call_closure(&mut self, closure: Box<ObjectClosure>, argument_count: u8) -> bool {
-        let function = &closure.function;//std::mem::replace(&mut closure.function, Box::new(ObjectFunction::new(0, "".to_string())));
+    fn call_closure(&mut self, closure: *mut ObjectClosure, argument_count: u8) -> bool {
+        let function = unsafe { &*(*closure).function };
         let arity = function.arity;
         if arity != argument_count {
-            self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
+            let _ = self.runtime_error(format!("Expected {} arguments but got {}.", arity, argument_count).as_str());
             return false;
         }
 
         if self.frames.len() >= MAX_FRAMES_SIIZE {
-            self.runtime_error("Stack overflow.");
+            let _ = self.runtime_error("Stack overflow.");
             return false;
         }
         let stack_base_pos = self.stack_top_pos - argument_count as usize - 1;
         let mut frame = CallFrame::new(NonNull::new(&mut self.stack[stack_base_pos]).unwrap(), stack_base_pos);
-        frame.set_callable_object(Box::into_raw(closure) as *mut Object);
+        frame.set_callable_object(closure as *mut Object);
         self.frames.push(Box::new(frame));
 
         true
@@ -231,7 +268,7 @@ impl VM {
 
     fn run(&mut self) -> Result<InterpretResult, String> {
         loop {
-            debug_feature::disassemble_instruction(self);
+            //debug_feature::disassemble_instruction(self);
 
             let instruction = match self.read_byte() {
                 Some(byte) => chunk::OpCode::from_byte(byte),
@@ -475,21 +512,22 @@ impl VM {
                 Some(chunk::OpCode::Closure) => {
                     if let Some(function_index) = self.read_constant() {
                         let object_function = as_function_object(&function_index) as *mut ObjectFunction;
-                        let mut closure_object = Box::new(ObjectClosure::new(unsafe { Box::from_raw(object_function) }));
-                        let upvalue_count = closure_object.function.upvalue_count;
+                        let closure_ptr = self.object_manager.alloc_closure(object_function);
+                        let upvalue_count = unsafe { (*(*closure_ptr).function).upvalue_count };
                         for _ in 0..upvalue_count {
                             let is_local = self.read_byte().unwrap();
                             let index = self.read_byte().unwrap();
                             if is_local == 0 {
                                 let upvalues = &mut self.current_frame().closure().upvalues;
-                                closure_object.upvalues.push(upvalues.get(index as usize).unwrap().clone());
+                                let uv_index = upvalues.get(index as usize).unwrap().clone();
+                                unsafe { (*closure_ptr).upvalues.push(uv_index); }
                             } else {
                                 let slot = unsafe { self.current_frame().get_stack_base().add(index as usize) };
                                 let upvalue_index = self.capture_upvalue(slot);
-                                closure_object.upvalues.push(upvalue_index);
+                                unsafe { (*closure_ptr).upvalues.push(upvalue_index); }
                             }
                         }
-                        let closure_object_value = make_closure_value(Box::into_raw(closure_object));
+                        let closure_object_value = make_closure_value(closure_ptr);
                         self.push(closure_object_value);
                     } else {
                         return self.report("There are not enough bytes to read a short.");
@@ -522,11 +560,20 @@ impl VM {
     }
 
     fn get_upvalue(&self, index: usize) -> Value {
-        unsafe { *self.open_upvalues.get(index).unwrap().location().as_ptr() }
+        let up_ptr = self.open_upvalues[index];
+        // up_ptr must be valid and point to an ObjectUpvalue owned by ObjectManager;
+        // it may point to either a stack slot (location) or the upvalue.closed (after closing).
+        unsafe {
+            let loc = (*up_ptr).location;
+            *loc
+        }
     }
-
     fn set_upvalue(&mut self, index: usize, value: Value) {
-        unsafe { *self.open_upvalues.get(index).unwrap().location().as_ptr() = value }
+        let up_ptr = self.open_upvalues[index];
+        unsafe {
+            let loc = (*up_ptr).location;
+            *loc = value;
+        }
     }
 
     fn read_short(&mut self) -> Option<u16> {
@@ -534,12 +581,11 @@ impl VM {
         {
             let frame = self.current_frame();
             let ip = *frame.ip();
-            let chunk = self.current_chunk();
+            let chunk = unsafe { self.current_chunk() };
             
             if ip + 1 < chunk.len() {
-                let mut short: u16 = 0;
-                short = (chunk.read_from_offset(ip).unwrap() as u16) << 8;
-                short = short | (chunk.read_from_offset(ip + 1).unwrap() as u16);
+                let short = ((chunk.read_from_offset(ip).unwrap() as u16) << 8) |
+                    chunk.read_from_offset(ip + 1).unwrap() as u16;
                 result = Some(short);
             }
         }
@@ -554,7 +600,7 @@ impl VM {
         {
             let frame = self.current_frame();
             let ip = *frame.ip();
-            let chunk = self.current_chunk();
+            let chunk = unsafe { self.current_chunk() };
 
             if ip < chunk.len() {
                 result = chunk.read_from_offset(ip);
@@ -572,7 +618,7 @@ impl VM {
             Some(byte) => byte,
             None => return None,
         };
-        let chunk = self.current_chunk();
+        let chunk = unsafe { self.current_chunk() };
         Some(*chunk.get_constant(instruction as usize))
     }
 
@@ -643,33 +689,60 @@ impl VM {
     }
 
     fn capture_upvalue(&mut self, slot: NonNull<Value>) -> usize {
-        let mut target_index = 0;
-        for (index, value) in self.open_upvalues.iter_mut().enumerate().rev() {
-            if slot == *value.location() {
-                target_index = index;
-                break;
-            } else if slot > *value.location() {
-                target_index = self.open_upvalues.len() - index;
-                self.open_upvalues.insert(target_index, ObjectUpvalue::new(slot));
-                break;
+        // let mut target_index = 0;
+        // for (index, value) in self.open_upvalues.iter_mut().enumerate().rev() {
+        //     if slot == *value.location() {
+        //         target_index = index;
+        //         break;
+        //     } else if slot > *value.location() {
+        //         target_index = self.open_upvalues.len() - index;
+        //         self.open_upvalues.insert(target_index, ObjectUpvalue::new(slot));
+        //         break;
+        //     }
+        // }
+        // if self.open_upvalues.is_empty() {
+        //     self.open_upvalues.insert(target_index, ObjectUpvalue::new(slot));
+        // }
+        // target_index
+        let slot_ptr = slot.as_ptr();
+        // find existing upvalue
+        for (i, &up_ptr) in self.open_upvalues.iter().enumerate() {
+            let loc = unsafe { (*up_ptr).location };
+            if loc == slot_ptr {
+                return i;
             }
         }
-        if self.open_upvalues.is_empty() {
-            self.open_upvalues.insert(target_index, ObjectUpvalue::new(slot));
-        }
-        target_index
+        // not found -> allocate a new upvalue via ObjectManager (heap stable) and push pointer
+        let new_up = self.object_manager.alloc_upvalue(slot_ptr);
+        self.open_upvalues.push(new_up);
+        self.open_upvalues.len() - 1
     }
 
     fn close_upvalues(&mut self, last: NonNull<Value>) {
-        for value in self.open_upvalues.iter_mut().enumerate().rev() {
-            if value.1.location < last {
-                break;
-            }
+        // for value in self.open_upvalues.iter_mut().enumerate().rev() {
+        //     if value.1.location < last {
+        //         break;
+        //     }
 
-            value.1.closed = unsafe { value.1.location.as_ref().deep_clone() };//unsafe { *value.1.location.as_ptr().clone() };
-            let v = &mut value.1.closed;
-            value.1.location = NonNull::new(v).unwrap();
-        }
+        //     value.1.closed = unsafe { value.1.location.as_ref().deep_clone() };//unsafe { *value.1.location.as_ptr().clone() };
+        //     let v = &mut value.1.closed;
+        //     value.1.location = NonNull::new(v).unwrap();
+        // }
+       let last_ptr = last.as_ptr();
+       // iterate in reverse and close those whose location >= last_ptr (stack grows upward assumption)
+       for i in (0..self.open_upvalues.len()).rev() {
+           let up_ptr = self.open_upvalues[i];
+           let loc = unsafe { (*up_ptr).location };
+           if loc < last_ptr {
+               break;
+           }
+           unsafe {
+               // copy the value from the stack into the upvalue.closed field
+               (*up_ptr).closed = *loc;
+               // point location to the closed field inside the upvalue (stable because upvalue is heap allocated)
+               (*up_ptr).location = &mut (*up_ptr).closed as *mut Value;
+           }
+       }
     }
 
     fn report(&mut self, message: &str) -> Result<InterpretResult, String> {
@@ -688,7 +761,7 @@ impl VM {
         //unsafe {
             let frame = self.current_frame();
             let instruction_index = *frame.ip() - 1;
-            let chunk = self.current_chunk();
+            let chunk = unsafe { self.current_chunk() };
             if let Some(instruction) = chunk.read_from_offset(instruction_index) {
                 if let Some(line) = chunk.read_line_from_offset(instruction as usize) {
                     //eprintln!("[line {}] in script", line);
@@ -719,6 +792,7 @@ impl VM {
 mod debug_feature {
     use super::*;
 
+    #[allow(dead_code)]
     pub fn disassemble_instruction(vm: &mut VM) {
         if vm.stack_top_pos < 1 {
             return;
@@ -732,7 +806,7 @@ mod debug_feature {
         }
         println!();
         let ip = *vm.current_frame().ip();
-        debug::disassemble_instruction(vm.current_chunk().as_ref(), ip);
+        debug::disassemble_instruction(unsafe { vm.current_chunk() }.as_ref(), ip);
     }
 }
 
@@ -931,7 +1005,7 @@ mod tests {
                 return inner;
             }
             var closure = outer();
-            closure()");
+            closure();");
         assert!(result == InterpretResult::InterpretOk);
     }
 

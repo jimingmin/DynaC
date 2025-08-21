@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::Peekable, str::Chars, sync::{mpsc::TryRecvError, OnceLock}, thread::current};
+use std::{collections::HashMap, iter::Peekable, str::Chars, sync::OnceLock};
 use strum_macros::{EnumString, Display};
 
 #[repr(u8)]
@@ -446,7 +446,8 @@ mod tests {
         }
         ";
         let mut scanner = Scanner::new(source);
-        while let token =  scanner.scan_token() {
+        loop {
+            let token = scanner.scan_token();
             println!("token is : {:?}", token);
             if token.token_type == TokenType::Error {
                 assert!(false);

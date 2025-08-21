@@ -1,4 +1,4 @@
-use crate::{objects::object::{NativeObject, Object, ObjectType}, value::{make_nil_value, Value, ValueArray, ValueType}};
+use crate::{objects::object::{NativeObject, Object, ObjectType}, value::{Value, ValueArray}};
 
 #[repr(C)]
 pub struct ObjectNativeFunction {

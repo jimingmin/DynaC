@@ -1,34 +1,43 @@
-use std::ptr::NonNull;
 
-use crate::{objects::object::{Object, ObjectType}, value::{make_nil_value, print_value, Value}};
+use crate::{
+    objects::object::{Object, ObjectType},
+    value::{make_nil_value, print_value, Value},
+};
 
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+#[allow(dead_code)]
 pub struct ObjectUpvalue {
     pub object: Object,
-    pub location: NonNull<Value>,
+    pub location: *mut Value,
     pub closed: Value,
 }
 
-
+#[allow(dead_code)]
 impl ObjectUpvalue {
-    pub fn new(slot: NonNull<Value>) ->Self {
+    pub fn new(location: *mut Value) -> Self {
         ObjectUpvalue {
             object: Object {
                 obj_type: ObjectType::ObjUpvalue,
             },
-            location: slot,
+            location,
             closed: make_nil_value(),
         }
     }
 
-    pub fn location(&self) -> &NonNull<Value> {
-        &self.location
+    /// Returns the raw pointer to the upvalue's location.
+    pub fn location(&self) -> *mut Value {
+        self.location
     }
 
     pub fn print(&self) {
-        print!("ObjectUpvalue: ObjectType={:?}, location=", self.object.obj_type);
-        print_value(unsafe { self.location.as_ref() });
+        print!(
+            "ObjectUpvalue: ObjectType={:?}, location=",
+            self.object.obj_type
+        );
+        match unsafe { self.location.as_ref() } {
+            Some(val) => print_value(val),
+            None => print!("<null>"),
+        }
         print!(", closed=");
         print_value(&self.closed);
         println!();
@@ -42,14 +51,14 @@ impl ObjectUpvalue {
 // }
 
 mod debug_feature {
-    use crate::objects::object_upvalue::ObjectUpvalue;
+    // use crate::objects::object_upvalue::ObjectUpvalue;
 
     // impl Drop for ObjectUpvalue {
     //     fn drop(&mut self) {
     //         print!("drop upvalue object: ");
     //         //let object_closure = std::ptr::from_mut(self) as *const ObjectUpvalue;
-    //         //self.print();
-    //         println!("type=ObjectUpvalue");
+    //         self.print();
+    //         //println!("type=ObjectUpvalue");
     //     }
     // }
 }

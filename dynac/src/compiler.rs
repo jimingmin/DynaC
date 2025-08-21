@@ -1,5 +1,5 @@
-use crate::{chunk::{self, Chunk, OpCode}, compiler, objects::{object::Object, object_function::ObjectFunction, object_manager::{self, ObjectManager}}, scanner::{self, Scanner, Token, TokenType}, table::Table, value::{self, *}};
-use std::{any::Any, cell::{Ref, RefCell, RefMut}, error, f64, io::Write, mem, rc::Rc, thread::current};
+use crate::{chunk::{self, Chunk, OpCode}, objects::{object_function::{ObjectFunction}, object_manager::{ObjectManager}}, scanner::{Scanner, Token, TokenType}, table::Table, value::{*}};
+use std::{f64, io::Write, mem};
 
 pub struct Parser<'a> {
     current: Token<'a>,
@@ -31,7 +31,7 @@ enum FunctionType {
 }
 
 struct Compiler<'a> {
-    function: Box<ObjectFunction>,
+    function: *mut ObjectFunction,
     function_type: FunctionType,
     locals: Vec<Local<'a>>,
     upvalues: Vec<Upvalue>,
@@ -41,7 +41,7 @@ struct Compiler<'a> {
 impl<'a> Compiler<'a> {
     pub fn new(function_type: FunctionType) -> Self {
         Compiler {
-            function: Box::new(ObjectFunction::new(0, String::new())),
+            function: std::ptr::null_mut(),//ObjectFunction::new(0, String::new()),
             function_type,
             locals: vec![],
             upvalues: vec![],
@@ -112,96 +112,94 @@ impl ParseRule {
 const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
     let mut rules = [ParseRule::new(None, None, Precedence::None); TokenType::Eof as usize + 1];
     rules[TokenType::LeftParen as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.grouping()), 
+        Some(|parser, _can_assign| parser.grouping()), 
         Some(|parser, can_assign| parser.call(can_assign)),
         Precedence::Call);
 
     rules[TokenType::Minus as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.unary()), 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.unary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Term);
 
     rules[TokenType::Plus as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Term);
 
     rules[TokenType::Slash as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Factor);
 
     rules[TokenType::Star as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Factor);
 
     rules[TokenType::Number as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.number()), 
+        Some(|parser, _can_assign| parser.number()), 
         None, 
         Precedence::None);
 
     rules[TokenType::String as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.string()), 
+        Some(|parser, _can_assign| parser.string()), 
         None, 
         Precedence::None);
 
     rules[TokenType::False as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.literal()), 
+        Some(|parser, _can_assign| parser.literal()), 
         None, 
         Precedence::None);
 
     rules[TokenType::True as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.literal()), 
+        Some(|parser, _can_assign| parser.literal()), 
         None, 
         Precedence::None);
 
     rules[TokenType::Nil as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.literal()), 
+        Some(|parser, _can_assign| parser.literal()), 
         None, 
         Precedence::None);
 
     rules[TokenType::Bang as usize] = ParseRule::new(
-        Some(|parser, can_assign| parser.unary()), 
+        Some(|parser, _can_assign| parser.unary()), 
         None, 
         Precedence::None);
 
     rules[TokenType::BangEqual as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Equality);
 
     rules[TokenType::EqualEqual as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Equality);
 
     rules[TokenType::Greater as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Comparison);
 
     rules[TokenType::GreaterEqual as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Comparison);
 
     rules[TokenType::Less as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Comparison);
 
     rules[TokenType::LessEqual as usize] = ParseRule::new(
         None, 
-        Some(|parser, can_assign| parser.binary()), 
+        Some(|parser, _can_assign| parser.binary()), 
         Precedence::Comparison);
 
     rules[TokenType::Identifier as usize] = ParseRule::new(
         Some(|parser, can_assign| parser.variable(can_assign)), 
-        None, 
-        Precedence::None);
-
-    rules[TokenType::And as usize] = ParseRule::new(
+        None,
+        Precedence::None);    rules[TokenType::And as usize] = ParseRule::new(
         None, 
         Some(|parser, can_assign| parser.and(can_assign)), 
         Precedence::And);
@@ -215,8 +213,8 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
 };
 
 impl<'a> Parser<'a> {
-    pub fn new(object_manager: &'a mut ObjectManager, intern_strings: &'a mut Table) -> Box<Parser<'a>> {
-        let mut parser = Box::new(Parser{
+    pub fn new(object_manager: &'a mut ObjectManager, intern_strings: &'a mut Table) -> Self {
+        let mut parser = Parser{
             current: Token{token_type: TokenType::Eof, value: "", line: 0},
             previous: Token{token_type: TokenType::Eof, value: "", line: 0},
             scanner: None,
@@ -225,12 +223,12 @@ impl<'a> Parser<'a> {
             compilers: vec![],
             object_manager,
             intern_strings,
-        });
+        };
         parser.init_compiler(FunctionType::Script);
         parser
     }
 
-    pub fn compile(&mut self, source: &'a str) -> Option<Box<ObjectFunction>> {
+    pub fn compile(&mut self, source: &'a str) -> Option<*mut ObjectFunction> {
         self.scanner = Some(Scanner::new(source));
         self.current = Token{token_type: TokenType::Eof, value: "", line: 0};
         self.previous = Token{token_type: TokenType::Eof, value: "", line: 0};
@@ -242,7 +240,12 @@ impl<'a> Parser<'a> {
         }
 
         self.consume(TokenType::Eof, "Expect end of expression.");
-        
+
+        // If any parse/compile errors were reported, return None to indicate failure.
+        if self.has_error {
+            return None;
+        }
+
         return self.end_compiler();
     }
 
@@ -262,12 +265,12 @@ impl<'a> Parser<'a> {
         self.compilers.last_mut().expect("No compiler.")
     }
 
-    fn current_function(&self) -> &Box<ObjectFunction> {
-        &self.current_compiler().function
+    fn current_function(&self) -> & ObjectFunction {
+        unsafe { &*self.current_compiler().function }
     }
 
-    fn current_function_mut(&mut self) -> &mut Box<ObjectFunction> {
-        &mut self.current_compiler_mut().function
+    fn current_function_mut(&mut self) -> &mut ObjectFunction {
+        unsafe { &mut *self.current_compiler_mut().function }
     }
 
     fn current_chunk(&self) -> &Box<Chunk> {
@@ -348,11 +351,15 @@ impl<'a> Parser<'a> {
 
     fn init_compiler(&mut self, function_type: FunctionType) {
         let mut compiler = Compiler::new(function_type);
+
+        let object_function = self.object_manager.alloc_function(0, "".to_string());
+        compiler.function = object_function;
+
         // When compiling a function declaration, we call init_compiler() right after
         // we parse the function’s name. That means we can grab the name right then
         // from the previous token.
         if compiler.function_type != FunctionType::Script {
-            compiler.function.name = self.previous.value.to_string();
+            unsafe { (*compiler.function).name = self.previous.value.to_string(); }
         }
 
         // the compiler sets aside stack slot zero that stores the function being called
@@ -367,7 +374,7 @@ impl<'a> Parser<'a> {
         self.compilers.push(compiler);
     }
 
-    fn end_compiler(&mut self) -> Option<Box<ObjectFunction>> {
+    fn end_compiler(&mut self) -> Option<*mut ObjectFunction> {
         self.emit_return();
 
         if self.current_function().name.is_empty() {
@@ -377,8 +384,11 @@ impl<'a> Parser<'a> {
             debug_feature::disassemble_chunk(self, function_name);
         }
         
-        let function = mem::replace(&mut self.current_compiler_mut().function, 
-        Box::new(ObjectFunction::new(0, "".to_string())));
+        let object_function = self.object_manager.alloc_function(
+            0, 
+            "".to_string()
+        );
+        let function = mem::replace(&mut self.current_compiler_mut().function, object_function);
         self.compilers.pop();
         Some(function)
     }
@@ -539,10 +549,9 @@ impl<'a> Parser<'a> {
 
         let upvalues = self.current_compiler().upvalues.clone();
 
-        let mut object_function = self.end_compiler().expect("Unexpected function object.");
-        object_function.upvalue_count = upvalues.len();
-        let object_function_ptr = Box::into_raw(object_function);
-        let function_constant_index = self.make_constant(make_function_value(object_function_ptr));
+        let object_function = self.end_compiler().expect("Unexpected function object.");
+        unsafe { (*object_function).upvalue_count = upvalues.len(); }
+        let function_constant_index = self.make_constant(make_function_value(object_function));
         //self.emit_bytes(OpCode::Constant.to_byte(), function_constant_index);
         self.emit_bytes(OpCode::Closure.to_byte(), function_constant_index);
 
@@ -665,25 +674,26 @@ impl<'a> Parser<'a> {
     }
 
     fn add_upvalue(&mut self, compiler_index: usize, local: i32, is_local: bool) -> usize {
-        let mut compiler = self.specific_compiler_mut(compiler_index);
+        let compiler = self.specific_compiler_mut(compiler_index);
         for (index, upvalue) in compiler.upvalues.iter().enumerate() {
             if upvalue.is_local == is_local && upvalue.index == local as usize {
                 return index;
             }
         }
         compiler.upvalues.push(Upvalue { index: local as usize, is_local });
-        compiler.function.upvalue_count = compiler.upvalues.len();
-        return compiler.function.upvalue_count - 1;
+        let count = compiler.upvalues.len();
+        unsafe { (*compiler.function).upvalue_count = count; }
+        count - 1
     }
 
-    fn and(&mut self, can_assign: bool) {
+    fn and(&mut self, _can_assign: bool) {
         let jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfFalse.to_byte());
         self.emit_byte(OpCode::Pop.to_byte());
         self.parse_precedence(Precedence::And);
         self.patch_jump_offset(jump_offset_operand);
     }
 
-    fn or(&mut self, can_assign: bool) {
+    fn or(&mut self, _can_assign: bool) {
         let jump_offset_operand = self.emit_jump_bytes(OpCode::JumpIfTrue.to_byte());
         self.emit_byte(OpCode::Pop.to_byte());
         self.parse_precedence(Precedence::Or);
@@ -744,7 +754,7 @@ impl<'a> Parser<'a> {
             self.error("Too much code to jump over.");
         }
 
-        let mut current_chunk = self.current_chunk_mut();
+        let current_chunk = self.current_chunk_mut();
         current_chunk.write_by_offset(offset as usize, ((jump_offset >> 8) & 0xff) as u8);
         current_chunk.write_by_offset(offset as usize + 1, (jump_offset & 0xff) as u8);
     }
@@ -937,7 +947,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn call(&mut self, can_assign: bool) {
+    fn call(&mut self, _can_assign: bool) {
         let argument_count = self.argument_list();
         self.emit_bytes(OpCode::Call.to_byte(), argument_count);
     }
@@ -1021,13 +1031,13 @@ impl<'a> Parser<'a> {
 
 #[cfg(feature = "debug_print_code")]
 mod debug_feature {
-    use crate::debug;
+    
 
     use super::*;
 
-    pub fn disassemble_chunk(parser: &mut Parser, name: &str) {
+    pub fn disassemble_chunk(parser: &mut Parser, _name: &str) {
         if !parser.has_error {
-            debug::disassemble_chunk(&parser.current_chunk(), name);
+            //debug::disassemble_chunk(&parser.current_chunk(), name);
         }
     }
 }
@@ -1041,7 +1051,7 @@ mod debug_feature {
 
 #[cfg(test)]
 mod tests {
-    use crate::chunk::Chunk;
+    
 
     use super::*;
 
@@ -1059,7 +1069,7 @@ mod tests {
         let result = parser.compile("!(5 - 4 > 3 * 2 == !nil);");
         assert!(result.is_some());
         
-        let function = &result.unwrap();
+        let function = unsafe { &*result.unwrap() };
         let chunk = &function.chunk;
 
         // 00000000 00000001 Constant            0 '5'

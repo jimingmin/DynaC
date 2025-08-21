@@ -3,6 +3,7 @@ use crate::value;
 use crate::value::as_function_object;
 use crate::value::print_value;
 
+#[allow(dead_code)]
 pub fn disassemble_chunk(chunk: &chunk::Chunk, name: &str) {
     println!("== {} ==", name);
 
@@ -79,7 +80,7 @@ pub fn disassemble_instruction(chunk: &chunk::Chunk, mut offset: usize) -> usize
             println!();
 
             let function = as_function_object(chunk.get_constant(constant as usize));
-            for i in 0..(unsafe { &*function }).upvalue_count {
+            for _i in 0..(unsafe { &*function }).upvalue_count {
                 let is_local = chunk.read_from_offset(offset).unwrap();
                 offset += 1;
                 let index = chunk.read_from_offset(offset).unwrap();

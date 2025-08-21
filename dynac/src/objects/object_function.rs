@@ -10,17 +10,18 @@ pub struct ObjectFunction {
     pub upvalue_count: usize,
 }
 
+#[allow(dead_code)]
 impl ObjectFunction {
     pub fn new(arity: u8, name: String) -> Self {
         ObjectFunction {
-                object: Object {
-                    obj_type: ObjectType::ObjFunction,
-                },
-                arity,
-                chunk: Box::new(Chunk::new()),
-                name,
-                upvalue_count: 0,
-            }
+            object: Object {
+                obj_type: ObjectType::ObjFunction,
+            },
+            arity,
+            chunk: Box::new(Chunk::new()),
+            name,
+            upvalue_count: 0,
+        }
     }
 
     pub fn chunk(&self) -> &Box<Chunk> {

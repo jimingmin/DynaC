@@ -9,12 +9,14 @@ pub struct ObjectString {
 
 impl ObjectString {
     pub fn new(content: &str) -> Self {
-        ObjectString{
+        let s = ObjectString{
             object: Object {
                     obj_type: ObjectType::ObjString,
                 },
             content: content.to_string()
-        }
+        };
+        println!("new string object: {}, addr: {:p}", content, &s);
+        s
     }
 }
 
@@ -34,9 +36,9 @@ mod debug_feature {
         fn drop(&mut self) {
             print!("drop string object: ");
             let object_string = std::ptr::from_mut(self) as *const ObjectString;
-            println!("type=ObjectString, content={}", unsafe {
+            println!("type=ObjectString, content={}, addr=0x{:x}", unsafe {
                 (*object_string).content.as_str()
-            });
+            }, std::ptr::addr_of!(self) as usize);
         }
     }
 }
