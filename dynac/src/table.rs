@@ -47,4 +47,8 @@ impl Table {
     // pub fn find(&self, key: &str) -> Option<Rc<ObjectString>>{
     //     self.entries.get(key).cloned()
     // }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.entries.iter()
+    }
 }

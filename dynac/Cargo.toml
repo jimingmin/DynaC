@@ -10,6 +10,7 @@ default = ["debug_trace_execution", "debug_print_code"]
 debug_trace_execution = []
 debug_print_code = []
 debug_trace_object = []
+gc_debug = []
 
 [dependencies]
 strum = "0.24"

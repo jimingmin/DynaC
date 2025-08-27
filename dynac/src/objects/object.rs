@@ -1,4 +1,14 @@
 use crate::value::{Value, ValueArray};
+use std::mem::size_of;
+
+// Forward declare concrete object structs so we can cast in dispatcher helpers.
+use super::{
+    object_closure::ObjectClosure,
+    object_function::ObjectFunction,
+    object_native_function::ObjectNativeFunction,
+    object_string::ObjectString,
+    object_upvalue::ObjectUpvalue,
+};
 
 #[repr(C)]
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -20,6 +30,41 @@ pub trait NativeObject {
     fn run(&self, args: &Option<ValueArray>) -> Result<Value, String>;
 }
 
+impl Object {
+    /// Shallow size (header only) – mainly for debugging.
+    #[allow(dead_code)]
+    pub fn shallow_size(&self) -> usize { size_of::<Object>() }
+
+    /// Compute the deep size of the concrete object that this header belongs to.
+    /// Safety: caller guarantees `self` is embedded at the start of the concrete object.
+    pub unsafe fn deep_size(&self) -> usize {
+        match self.obj_type {
+            ObjectType::ObjString => (*(self as *const _ as *const ObjectString)).deep_size(),
+            ObjectType::ObjFunction => (*(self as *const _ as *const ObjectFunction)).deep_size(),
+            ObjectType::ObjNativeFunction => (*(self as *const _ as *const ObjectNativeFunction)).deep_size(),
+            ObjectType::ObjClosure => (*(self as *const _ as *const ObjectClosure)).deep_size(),
+            ObjectType::ObjUpvalue => (*(self as *const _ as *const ObjectUpvalue)).deep_size(),
+        }
+    }
+
+    /// Cast helpers with debug assertions to reduce accidental UB during development.
+    #[inline]
+    #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
+    pub unsafe fn as_string(&self) -> &ObjectString { debug_assert!(matches!(self.obj_type, ObjectType::ObjString)); &*(self as *const _ as *const ObjectString) }
+    #[inline]
+    #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
+    pub unsafe fn as_function(&self) -> &ObjectFunction { debug_assert!(matches!(self.obj_type, ObjectType::ObjFunction)); &*(self as *const _ as *const ObjectFunction) }
+    #[inline]
+    #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
+    pub unsafe fn as_native_function(&self) -> &ObjectNativeFunction { debug_assert!(matches!(self.obj_type, ObjectType::ObjNativeFunction)); &*(self as *const _ as *const ObjectNativeFunction) }
+    #[inline]
+    #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
+    pub unsafe fn as_closure(&self) -> &ObjectClosure { debug_assert!(matches!(self.obj_type, ObjectType::ObjClosure)); &*(self as *const _ as *const ObjectClosure) }
+    #[inline]
+    #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
+    pub unsafe fn as_upvalue(&self) -> &ObjectUpvalue { debug_assert!(matches!(self.obj_type, ObjectType::ObjUpvalue)); &*(self as *const _ as *const ObjectUpvalue) }
+}
+
 impl PartialEq for Object {
     fn eq(&self, other: &Object) -> bool {
         self.obj_type == other.obj_type
@@ -28,6 +73,58 @@ impl PartialEq for Object {
 
 impl Eq for Object {
 }
+
+/// Trait for computing heap usage of GC managed structures (owned data only).
+pub trait GcSize {
+    /// Bytes for the struct itself (includes inline fields, pointers, lengths, capacities meta).
+    fn shallow_size(&self) -> usize;
+    /// Bytes including owned heap allocations (recursive but NOT traversing to other GC objects).
+    fn deep_size(&self) -> usize;
+}
+
+// Implementations for each object type. These treat referenced GC objects (by raw pointer)
+// as non-owned (so only pointer size counted via the struct layout, already in shallow).
+
+impl GcSize for ObjectString {
+    fn shallow_size(&self) -> usize { size_of::<ObjectString>() }
+    fn deep_size(&self) -> usize {
+        // String capacity bytes (Vec<u8> internal) – use capacity not len.
+        self.shallow_size() + self.content.capacity()
+    }
+}
+
+impl GcSize for ObjectFunction {
+    fn shallow_size(&self) -> usize { size_of::<ObjectFunction>() }
+    fn deep_size(&self) -> usize {
+        // name capacity + chunk deep size (Box<Chunk> heap)
+        let name_bytes = self.name.capacity();
+        let chunk_bytes = self.chunk.deep_size();
+        self.shallow_size() + name_bytes + chunk_bytes
+    }
+}
+
+impl GcSize for ObjectClosure {
+    fn shallow_size(&self) -> usize { size_of::<ObjectClosure>() }
+    fn deep_size(&self) -> usize {
+        // Owns the upvalues Vec (capacity * usize)
+        self.shallow_size() + self.upvalues.capacity() * size_of::<usize>()
+    }
+}
+
+impl GcSize for ObjectNativeFunction {
+    fn shallow_size(&self) -> usize { size_of::<ObjectNativeFunction>() }
+    fn deep_size(&self) -> usize {
+        // We cannot inspect dynamic native object internals. Approximate with box target size only.
+        // Box<dyn Trait> layout: pointer + vtable pointer already inside struct (shallow). Add name capacity.
+        self.shallow_size() + self.name.capacity()
+    }
+}
+
+impl GcSize for ObjectUpvalue {
+    fn shallow_size(&self) -> usize { size_of::<ObjectUpvalue>() }
+    fn deep_size(&self) -> usize { self.shallow_size() }
+}
+
 
 //#[cfg(feature = "debug_trace_object")]
 //  mod debug_feature {

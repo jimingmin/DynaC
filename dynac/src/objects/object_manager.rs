@@ -10,57 +10,71 @@ use crate::objects::{
 #[allow(dead_code)]
 pub struct ObjectManager {
     objects: Vec<*mut Object>,
+    // Bytes allocated since last drain (deep size of each object when added)
+    pending_bytes: usize,
 }
 
 #[allow(dead_code)]
 impl ObjectManager {
     pub fn new() -> Self {
-        Self { objects: Vec::new() }
+        Self {
+            objects: Vec::new(),
+            pending_bytes: 0,
+        }
     }
 
-    pub fn push_object(&mut self, obj: *mut Object) {
+    /// Drain and return bytes allocated since last call.
+    pub fn drain_pending_bytes(&mut self) -> usize {
+        let b = self.pending_bytes;
+        self.pending_bytes = 0;
+        b
+    }
+
+    /// Push a newly allocated object pointer, record its deep size, and return that size.
+    pub fn push_object(&mut self, obj: *mut Object) -> usize {
+        let size = unsafe { (*obj).deep_size() } as usize;
+        self.pending_bytes += size;
         self.objects.push(obj);
+        size
     }
 
-    pub fn alloc_string(&mut self, value: &str) -> *mut ObjectString {
+    pub fn alloc_string(&mut self, value: &str) -> (*mut ObjectString, usize) {
         let obj = Box::new(ObjectString::new(value));
         let ptr = Box::into_raw(obj);
-        self.push_object(ptr as *mut Object);
-        ptr
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
     }
 
-    pub fn alloc_function(&mut self, arity: usize, name: String) -> *mut ObjectFunction {
+    pub fn alloc_function(&mut self, arity: usize, name: String) -> (*mut ObjectFunction, usize) {
         let obj = Box::new(ObjectFunction::new(arity as u8, name));
         let ptr = Box::into_raw(obj);
-        self.push_object(ptr as *mut Object);
-        ptr
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
     }
 
-    pub fn alloc_closure(&mut self, function: *mut ObjectFunction) -> *mut ObjectClosure {
+    pub fn alloc_closure(&mut self, function: *mut ObjectFunction) -> (*mut ObjectClosure, usize) {
         let obj = Box::new(ObjectClosure::new(function));
         let ptr = Box::into_raw(obj);
-        self.push_object(ptr as *mut Object);
-        ptr
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
     }
 
-    pub fn alloc_native_function<T: NativeObject + 'static>(&mut self, name: String, arity: usize, native_obj: T) -> *mut ObjectNativeFunction {
+    pub fn alloc_native_function<T: NativeObject + 'static>(&mut self, name: String, arity: usize, native_obj: T) -> (*mut ObjectNativeFunction, usize) {
         let obj = Box::new(ObjectNativeFunction::new(name, arity as u8, native_obj));
         let ptr = Box::into_raw(obj);
-        self.push_object(ptr as *mut Object);
-        ptr
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
     }
 
-    pub fn alloc_upvalue(&mut self, location: *mut crate::value::Value) -> *mut ObjectUpvalue {
+    pub fn alloc_upvalue(&mut self, location: *mut crate::value::Value) -> (*mut ObjectUpvalue, usize) {
         let obj = Box::new(ObjectUpvalue::new(location));
         let ptr = Box::into_raw(obj);
-        self.push_object(ptr as *mut Object);
-        ptr
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
     }
 
     /// Iterate over all managed objects (for GC mark/sweep)
-    pub fn iter(&self) -> impl Iterator<Item = &*mut Object> {
-        self.objects.iter()
-    }
+    pub fn iter(&self) -> impl Iterator<Item = &*mut Object> { self.objects.iter() }
 
     /// Remove a pointer from the manager (optional, for GC sweep)
     pub fn remove_object(&mut self, ptr: *mut Object) {

@@ -1,5 +1,7 @@
 use strum_macros::{EnumString, Display};
 use crate::value::{Value, ValueArray};
+use std::mem::size_of;
+use crate::objects::object::GcSize;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, Display)]
@@ -138,6 +140,23 @@ impl Chunk {
 
     pub fn len(&self) -> usize {
         self.code.len()
+    }
+
+    // For garbage collection - iterate over constants
+    pub fn iter_constants(&self) -> impl Iterator<Item = &Value> {
+        self.constants.iter()
+    }
+}
+
+impl GcSize for Chunk {
+    #[allow(dead_code)]
+    fn shallow_size(&self) -> usize { size_of::<Chunk>() }
+    fn deep_size(&self) -> usize {
+        // Vec layout already in shallow; add backing buffers via capacity * element size.
+        let code_bytes = self.code.capacity() * size_of::<u8>();
+        let line_bytes = self.lines.capacity() * size_of::<usize>();
+        let constants_bytes = self.constants.capacity() * size_of::<Value>();
+        self.shallow_size() + code_bytes + line_bytes + constants_bytes
     }
 }
 

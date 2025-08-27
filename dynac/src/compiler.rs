@@ -352,7 +352,7 @@ impl<'a> Parser<'a> {
     fn init_compiler(&mut self, function_type: FunctionType) {
         let mut compiler = Compiler::new(function_type);
 
-        let object_function = self.object_manager.alloc_function(0, "".to_string());
+        let (object_function, _size) = self.object_manager.alloc_function(0, "".to_string());
         compiler.function = object_function;
 
         // When compiling a function declaration, we call init_compiler() right after
@@ -384,11 +384,11 @@ impl<'a> Parser<'a> {
             debug_feature::disassemble_chunk(self, function_name);
         }
         
-        let object_function = self.object_manager.alloc_function(
+    let (object_function, _size) = self.object_manager.alloc_function(
             0, 
             "".to_string()
         );
-        let function = mem::replace(&mut self.current_compiler_mut().function, object_function);
+    let function = mem::replace(&mut self.current_compiler_mut().function, object_function);
         self.compilers.pop();
         Some(function)
     }
@@ -430,10 +430,11 @@ impl<'a> Parser<'a> {
         //         self.emit_constant(value);
         //     }
         // }
+        let literal = &self.previous.value[1..self.previous.value.len() - 1];
         let value = make_string_value(
             &mut self.object_manager,
             &mut self.intern_strings,
-            &self.previous.value[1..self.previous.value.len() - 1]  // The + 1 and - 1 parts trim the leading and trailing quotation marks.
+            literal
         );
         self.emit_constant(value);
     }

@@ -45,6 +45,14 @@ impl Clone for Value {
 
 #[allow(dead_code)]
 impl Value {
+    pub fn new() -> Self {
+        // Default to nil
+        Self {
+            value_type: ValueType::ValueNil,
+            value_as: ValueUnion { number: 0.0 } // Safe to use any field when nil
+        }
+    }
+
     /// Deep-clone a Value using the provided `ObjectManager` for any heap allocations.
     /// This replaces the previous two-function approach and centralizes the managed
     /// deep-clone behavior on `deep_clone` itself.
@@ -72,14 +80,14 @@ impl Value {
                     match object.obj_type {
                         ObjectType::ObjString => {
                             let original = &*(self.value_as.object as *const ObjectString);
-                            let new_ptr = object_manager.alloc_string(original.content.as_str());
+                            let (new_ptr, _sz) = object_manager.alloc_string(original.content.as_str());
                             Value { value_type: self.value_type, value_as: ValueUnion { object: new_ptr as *mut Object } }
                         }
 
                         ObjectType::ObjFunction => {
                             let original = &*(self.value_as.object as *const ObjectFunction);
                             // allocate new function via manager and copy internals
-                            let func_ptr = object_manager.alloc_function(original.arity as usize, original.name.clone());
+                            let (func_ptr, _sz) = object_manager.alloc_function(original.arity as usize, original.name.clone());
                             (*func_ptr).chunk = Box::new((*original.chunk).clone());
                             (*func_ptr).upvalue_count = original.upvalue_count;
                             Value { value_type: self.value_type, value_as: ValueUnion { object: func_ptr as *mut Object } }
@@ -89,12 +97,12 @@ impl Value {
                             let original = &*(self.value_as.object as *const ObjectClosure);
                             // deep-clone the referenced function first
                             let orig_func = &*original.function;
-                            let new_func_ptr = object_manager.alloc_function(orig_func.arity as usize, orig_func.name.clone());
+                            let (new_func_ptr, _sz_fn) = object_manager.alloc_function(orig_func.arity as usize, orig_func.name.clone());
                             (*new_func_ptr).chunk = Box::new((*orig_func.chunk).clone());
                             (*new_func_ptr).upvalue_count = orig_func.upvalue_count;
 
                             // allocate closure referencing new function
-                            let closure_ptr = object_manager.alloc_closure(new_func_ptr);
+                            let (closure_ptr, _sz_cl) = object_manager.alloc_closure(new_func_ptr);
                             // copy upvalue indices
                             for &idx in original.upvalues.iter() {
                                 (*closure_ptr).upvalues.push(idx);
@@ -104,7 +112,7 @@ impl Value {
 
                         ObjectType::ObjUpvalue => {
                             let original = &*(self.value_as.object as *const ObjectUpvalue);
-                            let new_up = object_manager.alloc_upvalue(original.location);
+                            let (new_up, _sz_up) = object_manager.alloc_upvalue(original.location);
                             // copy closed value
                             (*new_up).closed = original.closed.clone();
                             // if original was already closed (location points to original.closed),
@@ -335,13 +343,12 @@ pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mu
     if let Some(value) = intern_strings.find(str_value) {
         value.clone()
     } else {
-        let object_string = object_manager.alloc_string(str_value);
+        let (object_string, _size) = object_manager.alloc_string(str_value);
         let value = Value {
             value_type: ValueType::ValueObject,
             value_as: ValueUnion{object: object_string as *mut Object},
         };
         intern_strings.insert(str_value.to_string(), value);
-
         value.clone()
     }
 }

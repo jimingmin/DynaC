@@ -15,7 +15,7 @@ impl ObjectString {
                 },
             content: content.to_string()
         };
-        println!("new string object: {}, addr: {:p}", content, &s);
+        //println!("new string object: {}, addr: {:p}", content, &s);
         s
     }
 }
@@ -30,15 +30,15 @@ impl Eq for ObjectString {
 }
 
 mod debug_feature {
-    use crate::objects::object_string::ObjectString;
+    // use crate::objects::object_string::ObjectString;
 
-    impl Drop for ObjectString {
-        fn drop(&mut self) {
-            print!("drop string object: ");
-            let object_string = std::ptr::from_mut(self) as *const ObjectString;
-            println!("type=ObjectString, content={}, addr=0x{:x}", unsafe {
-                (*object_string).content.as_str()
-            }, std::ptr::addr_of!(self) as usize);
-        }
-    }
+    // impl Drop for ObjectString {
+    //     fn drop(&mut self) {
+    //         print!("drop string object: ");
+    //         let object_string = std::ptr::from_mut(self) as *const ObjectString;
+    //         println!("type=ObjectString, content={}, addr=0x{:x}", unsafe {
+    //             (*object_string).content.as_str()
+    //         }, std::ptr::addr_of!(self) as usize);
+    //     }
+    // }
 }

@@ -1,6 +1,7 @@
 use std::ptr::NonNull;
 
 use crate::{
+    gc::GarbageCollector,
     call_frame::CallFrame,
     chunk::{self, Chunk},
     compiler::Parser,
@@ -20,7 +21,7 @@ use crate::{
         as_number, as_string_object, is_bool, is_closure, is_function, is_native_function, 
         is_nil, is_number, is_object, is_string, make_bool_value, make_closure_value, make_function_value,
         make_native_function_value, make_nil_value, make_numer_value, make_string_value,
-        print_value, Value, ValueType, ValueUnion
+        print_value, Value
     },
 };
 use crate::objects::object_manager::ObjectManager;
@@ -33,9 +34,12 @@ pub struct VM {
     intern_strings: Box<Table>,
     globals: Box<Table>,
     open_upvalues: Vec<*mut ObjectUpvalue>,
+    gc: GarbageCollector,
+    bytes_allocated: usize,
+    next_gc_bytes: usize,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum InterpretResult {
     InterpretOk,
     InterpretCompileError,
@@ -44,27 +48,6 @@ pub enum InterpretResult {
 
 impl Drop for VM {
     fn drop(&mut self) {
-        // loop {
-        //     let object = self.object_manager.pop_object();
-        //     if object.is_null() {
-        //         break;
-        //     }
-
-        //     unsafe {
-        //         let object_ptr = Box::from_raw(object);
-        //         if object_ptr.obj_type == ObjectType::ObjString {
-        //             let object_string = &*(object as *const ObjectString);
-        //             println!("VM is droping string object:{}, addr:{:p}", object_string.content, &*object_ptr);
-        //         } else if object_ptr.obj_type == ObjectType::ObjFunction {
-        //             let object_function = &*(object as *const ObjectFunction);
-        //             println!("VM is droping function object:{}", object_function.name);
-        //         } else if object_ptr.obj_type == ObjectType::ObjClosure {
-        //             println!("VM is droping closure object");
-        //         } else if object_ptr.obj_type == ObjectType::ObjUpvalue {
-        //             println!("VM is droping upvalue object");
-        //         }
-        //     }
-        // }
         unsafe {
             self.object_manager.free_all();
         }
@@ -72,21 +55,23 @@ impl Drop for VM {
 }
 
 impl VM {
-    pub fn new() -> Box<VM> {
-        Box::new(VM {
-                frames: vec![],
-                stack: [Value {
-                    value_type: ValueType::ValueNil,
-                    value_as: ValueUnion{number: 0.0},
-                }; MAX_STACK_SIZE],
+    pub fn new() -> VM {
+        const INITIAL_GC_THRESHOLD: usize = 1024 * 1024; // 1MB
+        let vm = VM {
+                stack: [Value::new(); MAX_STACK_SIZE],
                 stack_top_pos: 0,
+                frames: Vec::with_capacity(MAX_FRAMES_SIIZE),
                 object_manager: Box::new(ObjectManager::new()),
                 intern_strings: Box::new(Table::new()),
                 globals: Box::new(Table::new()),
-                open_upvalues: vec![],
-            })
+                open_upvalues: Vec::new(),
+                gc: GarbageCollector::new(),
+                bytes_allocated: 0,
+                next_gc_bytes: INITIAL_GC_THRESHOLD,
+            };
+        vm
     }
-
+        
     pub fn interpret(&mut self, source: &str) -> InterpretResult {
         self.setup_standards();
         self.compile(source)
@@ -97,17 +82,14 @@ impl VM {
         if let Some(function_ptr) = parser.compile(source) {
             self.push(make_function_value(function_ptr));
 
-            // let mut frame = Box::new(CallFrame::new(NonNull::new(&mut self.stack[0]).unwrap()));
-            // frame.set_function(function.clone());
-            // self.frames.push(frame);
-
             self.call_function(function_ptr, 0);
         } else {
             println!("Compile Error!");
             return InterpretResult::InterpretCompileError;
         }
 
-        // return InterpretResult::InterpretOk;
+        // Incorporate any allocations performed during compilation (strings, functions) before execution
+        self.sync_pending_allocations();
         match self.run() {
             Ok(result) => result,
             Err(e) => {
@@ -117,9 +99,73 @@ impl VM {
         }
     }
 
+    fn sync_pending_allocations(&mut self) {
+        let new_bytes = self.object_manager.drain_pending_bytes();
+        if new_bytes > 0 { self.track_allocation(new_bytes); }
+    }
+
+    fn track_allocation(&mut self, bytes: usize) {
+        self.bytes_allocated += bytes;
+        if self.bytes_allocated > self.next_gc_bytes {
+            self.collect_garbage();
+        }
+    }
+
+    // Test-only helper: allow tests to lower GC threshold to force cycles under smaller workloads.
+    #[cfg(test)]
+    fn set_gc_threshold(&mut self, threshold: usize) {
+        self.next_gc_bytes = threshold;
+    }
+
+    fn update_next_gc_threshold(&mut self) {
+        // Common GC tuning: increase threshold by a factor (here 2x)
+        // This provides a balance between GC frequency and memory usage
+        self.next_gc_bytes = self.bytes_allocated * 2;
+    }
+
+    fn collect_garbage(&mut self) {
+        let before = self.bytes_allocated;
+        // Prepare GC
+        self.gc.prepare_collection(&self.object_manager);
+
+        // Mark roots
+        self.gc.mark_roots(
+            &self.stack,
+            self.stack_top_pos,
+            &self.globals,
+            &self.intern_strings,
+            &self.frames,
+            &self.open_upvalues,
+        );
+
+        // Trace
+        self.gc.trace_references();
+
+        // Sweep
+        let freed_bytes = self.gc.sweep(&mut self.object_manager);
+        self.bytes_allocated = self.bytes_allocated.saturating_sub(freed_bytes);
+        self.update_next_gc_threshold();
+        let after = self.bytes_allocated;
+        let next = self.next_gc_bytes;
+        // Record stats cycle
+        self.gc.record_cycle(before, freed_bytes, after, next);
+
+        #[cfg(feature = "gc_debug")]
+        eprintln!(
+            "[gc] cycle done: freed={} bytes before={}KB after={}KB next_trigger={}KB",
+            freed_bytes,
+            before / 1024,
+            self.bytes_allocated / 1024,
+            self.next_gc_bytes / 1024
+        );
+    }
+
     fn setup_standards(&mut self) {
-        let clock_ptr = self.object_manager.alloc_native_function("clock".to_string(), 0, ClockTime::new());
+        // Root ordering: Insert the newly allocated native function into a root (globals) BEFORE tracking
+        // the allocation, because tracking may immediately trigger GC.
+        let (clock_ptr, size) = self.object_manager.alloc_native_function("clock".to_string(), 0, ClockTime::new());
         self.globals.insert("clock".to_string(), make_native_function_value(clock_ptr));
+        self.track_allocation(size);
     }
 
     fn current_frame(&mut self) -> &mut CallFrame {
@@ -177,7 +223,7 @@ impl VM {
     }
 
     fn peek_steps(&self, distance: usize) -> Option<Value> {
-        if self.stack_top_pos > 0 {
+        if distance < self.stack_top_pos {
             Some(self.stack[self.stack_top_pos - distance - 1])
         } else {
             None
@@ -268,7 +314,9 @@ impl VM {
 
     fn run(&mut self) -> Result<InterpretResult, String> {
         loop {
-            //debug_feature::disassemble_instruction(self);
+            // Account for any new allocations done since last iteration (e.g., string interning during concatenation)
+            self.sync_pending_allocations();
+            // (optional) enable disassembly via feature flag: debug_trace_execution
 
             let instruction = match self.read_byte() {
                 Some(byte) => chunk::OpCode::from_byte(byte),
@@ -310,39 +358,32 @@ impl VM {
                     }
                 }
                 Some(chunk::OpCode::Add) => {
-                    if let Some(value_b) = self.peek_steps(0) {
-                        if let Some(value_a) = self.peek_steps(1) {
-                            if is_string(&value_a) && is_string(&value_b) {
-                                unsafe {
-                                    let string_b = &*(as_string_object(&self.pop()));
-                                    let string_a = &*(as_string_object(&self.pop()));
-                                    let mut combination = String::with_capacity(string_a.content.len() + string_b.content.len());
-                                    combination.push_str(string_a.content.as_str());
-                                    combination.push_str(string_b.content.as_str());
-                                    let combinated_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, combination.as_str());
-                                    self.push(combinated_value);
-                                }
-                            } else if is_number(&value_a) && is_number(&value_b) {
-                                let result = self.binary_op(chunk::OpCode::Add);
-                                match result {
-                                    Err(_) => return result,
-                                    _ => (),
-                                }
-                            } else {
-                                return self.report("Operands must be two numbers or two strings.");
-                            }
-                        } else {
-                            return self.report("There is a lack of second operand in the '+' Operation.");
+                    if self.stack_top_pos < 2 { return self.report("There is a lack of operands in the '+' Operation."); }
+                    let value_b = self.peek_steps(0).unwrap();
+                    let value_a = self.peek_steps(1).unwrap();
+                    if is_string(&value_a) && is_string(&value_b) {
+                        unsafe {
+                            // preserve ordering: a then b
+                            let string_b_ptr = as_string_object(&value_b);
+                            let string_a_ptr = as_string_object(&value_a);
+                            let string_b = &*string_b_ptr;
+                            let string_a = &*string_a_ptr;
+                            // pop two values (b then a) from stack
+                            self.pop(); // b
+                            self.pop(); // a
+                            let mut combination = String::with_capacity(string_a.content.len() + string_b.content.len());
+                            combination.push_str(string_a.content.as_str());
+                            combination.push_str(string_b.content.as_str());
+                            let combinated_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, combination.as_str());
+                            self.push(combinated_value);
                         }
+                    } else if is_number(&value_a) && is_number(&value_b) {
+                        let result = self.binary_op(chunk::OpCode::Add);
+                        match result { Err(_) => return result, _ => (), }
                     } else {
-                        return self.report("There is a lack of operands in the '+' Operation.");
+                        return self.report("Operands must be two numbers or two strings.");
                     }
 
-                    // let result = self.binary_op(chunk::OpCode::Add);
-                    // match result {
-                    //     Err(_) => return result,
-                    //     _ => (),
-                    // }
                 }
                 Some(chunk::OpCode::Subtract) => {
                     let result = self.binary_op(chunk::OpCode::Subtract);
@@ -512,7 +553,7 @@ impl VM {
                 Some(chunk::OpCode::Closure) => {
                     if let Some(function_index) = self.read_constant() {
                         let object_function = as_function_object(&function_index) as *mut ObjectFunction;
-                        let closure_ptr = self.object_manager.alloc_closure(object_function);
+                        let (closure_ptr, size) = self.object_manager.alloc_closure(object_function);
                         let upvalue_count = unsafe { (*(*closure_ptr).function).upvalue_count };
                         for _ in 0..upvalue_count {
                             let is_local = self.read_byte().unwrap();
@@ -528,7 +569,9 @@ impl VM {
                             }
                         }
                         let closure_object_value = make_closure_value(closure_ptr);
+                        // Push closure onto stack BEFORE accounting bytes to ensure it is marked as a root
                         self.push(closure_object_value);
+                        self.track_allocation(size);
                     } else {
                         return self.report("There are not enough bytes to read a short.");
                     }
@@ -550,9 +593,6 @@ impl VM {
                     }
                     self.stack_top_pos = stack_top_pos;
                     self.push(result);
-                    //print_value(&self.pop());
-                    //println!();
-                    //return Ok(InterpretResult::InterpretOk);
                 }
                 _ => return self.report("Unknown opcode"),
             }
@@ -713,8 +753,10 @@ impl VM {
             }
         }
         // not found -> allocate a new upvalue via ObjectManager (heap stable) and push pointer
-        let new_up = self.object_manager.alloc_upvalue(slot_ptr);
+        // Root ordering: add new upvalue pointer to open_upvalues (a GC root set) BEFORE tracking bytes.
+        let (new_up, size) = self.object_manager.alloc_upvalue(slot_ptr);
         self.open_upvalues.push(new_up);
+        self.track_allocation(size);
         self.open_upvalues.len() - 1
     }
 
@@ -729,18 +771,13 @@ impl VM {
         //     value.1.location = NonNull::new(v).unwrap();
         // }
        let last_ptr = last.as_ptr();
-       // iterate in reverse and close those whose location >= last_ptr (stack grows upward assumption)
-       for i in (0..self.open_upvalues.len()).rev() {
-           let up_ptr = self.open_upvalues[i];
+       for &up_ptr in &self.open_upvalues {
            let loc = unsafe { (*up_ptr).location };
-           if loc < last_ptr {
-               break;
-           }
-           unsafe {
-               // copy the value from the stack into the upvalue.closed field
-               (*up_ptr).closed = *loc;
-               // point location to the closed field inside the upvalue (stable because upvalue is heap allocated)
-               (*up_ptr).location = &mut (*up_ptr).closed as *mut Value;
+           if loc >= last_ptr {
+               unsafe {
+                   (*up_ptr).closed = *loc;
+                   (*up_ptr).location = &mut (*up_ptr).closed as *mut Value;
+               }
            }
        }
     }
@@ -754,11 +791,7 @@ impl VM {
     }
 
     fn runtime_error(&mut self, message: &str) -> Result<InterpretResult, String> {
-        // Print the formatted error message to stderr
-        //eprintln!("{}", args);
-
-        // Calculate instruction offset
-        //unsafe {
+    // Calculate instruction offset for error reporting
             let frame = self.current_frame();
             let instruction_index = *frame.ip() - 1;
             let chunk = unsafe { self.current_chunk() };
@@ -774,17 +807,6 @@ impl VM {
                 return Err(format_args!("Runtime error: {} [instruction ???] in script (invalid instruction)", message).to_string());
                 //eprintln!("[instruction ???] in script (invalid instruction)");
             }
-            //let instruction = (vm.ip as usize) - (vm.chunk as *const _ as *const u8 as usize) - 1;
-            
-            // Get the corresponding line number
-            // if let Some(line) = vm.chunk.as_ref().and_then(|c| c.lines.get(instruction)) {
-            //     eprintln!("[line {}] in script", line);
-            // } else {
-            //     eprintln!("[line ???] in script (invalid instruction index)");
-            // }
-        //}
-
-        //Err(format!("Runtime error: {}", format))
     }
 }
 
@@ -821,6 +843,8 @@ mod debug_feature {
 #[cfg(test)]
 mod tests {
     use crate::vm::InterpretResult;
+    use crate::value::{make_numer_value, Value};
+    use std::ptr::NonNull;
 
     use super::VM;
 
@@ -1033,4 +1057,75 @@ mod tests {
             globalGet();");
         assert!(result == InterpretResult::InterpretOk);
     }    
+
+    #[test]
+    fn test_gc_pressure_many_strings() {
+        let mut vm = VM::new();
+        // Force an early GC so we can observe at least one cycle during this test without huge allocations.
+        vm.set_gc_threshold(0);
+        // Builds increasingly large string causing many intermediate unreachable strings.
+        let script = "var s = \"\"; var i = 0; while (i < 1500) { s = s + \"abcdefgh\"; i = i + 1; }";
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+        // Ensure at least one GC cycle ran under allocation pressure.
+        assert!(vm.gc.stats().cycles > 0, "Expected GC cycles > 0, got {}", vm.gc.stats().cycles);
+    }
+
+    #[test]
+    fn test_gc_pressure_functions_and_closures_original() {
+        // Original failing pattern: function defined inside loop then immediately called.
+        let mut vm = VM::new();
+        vm.set_gc_threshold(0);
+        // Restored higher iteration count to increase allocation pressure & exercise multiple GC cycles.
+        let script = "var i = 0; while (i < 300) { fn f(){ return i; } f(); i = i + 1; }";
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+        assert!(vm.gc.stats().cycles > 0, "Expected GC cycles > 0, got {}", vm.gc.stats().cycles);
+    }
+    // Simulate old algorithm vs new to prove change.
+    #[test]
+    fn test_close_upvalues_old_vs_new_difference() {
+        let mut vm = VM::new();
+        // two locals
+        vm.stack[0] = make_numer_value(1.0);
+        vm.stack[1] = make_numer_value(2.0);
+        vm.stack_top_pos = 2;
+        // capture slot0 then slot1
+        let slot0 = NonNull::new(&mut vm.stack[0]).unwrap();
+        let slot1 = NonNull::new(&mut vm.stack[1]).unwrap();
+        vm.capture_upvalue(slot0); // index 0 -> stack[0]
+        vm.capture_upvalue(slot1); // index 1 -> stack[1]
+        // Permute to [slot1, slot0] so last element has lower address -> triggers old bug
+        vm.open_upvalues.swap(0,1);
+        let last_ptr = &mut vm.stack[1] as *mut Value; // closing locals at or above slot1
+
+        // Simulate old algorithm (reverse iteration + break) WITHOUT mutating real upvalues.
+        let mut simulated_closed = vec![false; vm.open_upvalues.len()];
+        for i in (0..vm.open_upvalues.len()).rev() {
+            let up_ptr = vm.open_upvalues[i];
+            let loc = unsafe { (*up_ptr).location };
+            if loc < last_ptr { break; }
+            simulated_closed[i] = true;
+        }
+        // Expect old algorithm to close none (because it starts at low-address slot0 and breaks)
+        assert_eq!(simulated_closed, vec![false, false], "Old algorithm would have closed incorrectly: {:?}", simulated_closed);
+
+        // Run new algorithm and verify slot1 (now index 0) is closed, slot0 (index 1) stays open.
+    let slot1_ptr_nn = NonNull::new(&mut vm.stack[1]).unwrap();
+    vm.close_upvalues(slot1_ptr_nn);
+        let up_slot1_ptr = vm.open_upvalues[0];
+        let up_slot0_ptr = vm.open_upvalues[1];
+        unsafe {
+            // slot1 should now be closed (location changed off the stack)
+            assert_ne!((*up_slot1_ptr).location, &mut vm.stack[1] as *mut Value, "New algorithm failed to close slot1 upvalue");
+            // slot0 should still point to stack (since last_ptr was slot1)
+            assert_eq!((*up_slot0_ptr).location, &mut vm.stack[0] as *mut Value, "Slot0 should remain open until its scope ends");
+        }
+        // Now close remaining (slot0)
+    let slot0_ptr_nn = NonNull::new(&mut vm.stack[0]).unwrap();
+    vm.close_upvalues(slot0_ptr_nn);
+        unsafe {
+            assert_ne!((*up_slot0_ptr).location, &mut vm.stack[0] as *mut Value, "Slot0 should now be closed");
+        }
+    }
 }

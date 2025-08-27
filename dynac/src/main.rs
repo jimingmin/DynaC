@@ -14,6 +14,7 @@ mod compiler;
 mod table;
 mod call_frame;
 mod constants;
+mod gc;
 
 
 fn repl() {
