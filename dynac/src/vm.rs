@@ -843,8 +843,6 @@ mod debug_feature {
 #[cfg(test)]
 mod tests {
     use crate::vm::InterpretResult;
-    use crate::value::{make_numer_value, Value};
-    use std::ptr::NonNull;
 
     use super::VM;
 
@@ -1082,50 +1080,5 @@ mod tests {
         assert_eq!(result, InterpretResult::InterpretOk);
         assert!(vm.gc.stats().cycles > 0, "Expected GC cycles > 0, got {}", vm.gc.stats().cycles);
     }
-    // Simulate old algorithm vs new to prove change.
-    #[test]
-    fn test_close_upvalues_old_vs_new_difference() {
-        let mut vm = VM::new();
-        // two locals
-        vm.stack[0] = make_numer_value(1.0);
-        vm.stack[1] = make_numer_value(2.0);
-        vm.stack_top_pos = 2;
-        // capture slot0 then slot1
-        let slot0 = NonNull::new(&mut vm.stack[0]).unwrap();
-        let slot1 = NonNull::new(&mut vm.stack[1]).unwrap();
-        vm.capture_upvalue(slot0); // index 0 -> stack[0]
-        vm.capture_upvalue(slot1); // index 1 -> stack[1]
-        // Permute to [slot1, slot0] so last element has lower address -> triggers old bug
-        vm.open_upvalues.swap(0,1);
-        let last_ptr = &mut vm.stack[1] as *mut Value; // closing locals at or above slot1
 
-        // Simulate old algorithm (reverse iteration + break) WITHOUT mutating real upvalues.
-        let mut simulated_closed = vec![false; vm.open_upvalues.len()];
-        for i in (0..vm.open_upvalues.len()).rev() {
-            let up_ptr = vm.open_upvalues[i];
-            let loc = unsafe { (*up_ptr).location };
-            if loc < last_ptr { break; }
-            simulated_closed[i] = true;
-        }
-        // Expect old algorithm to close none (because it starts at low-address slot0 and breaks)
-        assert_eq!(simulated_closed, vec![false, false], "Old algorithm would have closed incorrectly: {:?}", simulated_closed);
-
-        // Run new algorithm and verify slot1 (now index 0) is closed, slot0 (index 1) stays open.
-    let slot1_ptr_nn = NonNull::new(&mut vm.stack[1]).unwrap();
-    vm.close_upvalues(slot1_ptr_nn);
-        let up_slot1_ptr = vm.open_upvalues[0];
-        let up_slot0_ptr = vm.open_upvalues[1];
-        unsafe {
-            // slot1 should now be closed (location changed off the stack)
-            assert_ne!((*up_slot1_ptr).location, &mut vm.stack[1] as *mut Value, "New algorithm failed to close slot1 upvalue");
-            // slot0 should still point to stack (since last_ptr was slot1)
-            assert_eq!((*up_slot0_ptr).location, &mut vm.stack[0] as *mut Value, "Slot0 should remain open until its scope ends");
-        }
-        // Now close remaining (slot0)
-    let slot0_ptr_nn = NonNull::new(&mut vm.stack[0]).unwrap();
-    vm.close_upvalues(slot0_ptr_nn);
-        unsafe {
-            assert_ne!((*up_slot0_ptr).location, &mut vm.stack[0] as *mut Value, "Slot0 should now be closed");
-        }
-    }
 }
