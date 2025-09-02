@@ -1067,7 +1067,7 @@ mod tests {
         let mut object_manager = ObjectManager::new();
         let mut intern_strings = Table::new();
         let mut parser = Parser::new(&mut object_manager, &mut intern_strings);
-        let result = parser.compile("!(5 - 4 > 3 * 2 == !nil);");
+    let result = parser.compile(r#"!(5 - 4 > 3 * 2 == !nil);"#);
         assert!(result.is_some());
         
         let function = unsafe { &*result.unwrap() };
@@ -1120,11 +1120,11 @@ mod tests {
         let mut intern_strings = Table::new();
         let mut parser = Parser::new(&mut object_manager, &mut intern_strings);
         
-        let result = parser.compile("\"this is a test string\";");
+    let result = parser.compile(r#""this is a test string";"#);
         assert!(result.is_some());
 
         parser = Parser::new(&mut object_manager, &mut intern_strings);
-        let result = parser.compile("\"this is a test string\";");
+    let result = parser.compile(r#""this is a test string";"#);
         assert!(result.is_some());
 
         assert!(intern_strings.len() == 1);
@@ -1137,10 +1137,10 @@ mod tests {
         let mut parser = Parser::new(&mut object_manager, &mut intern_strings);
         
         let result = parser.compile(
-            "fn areWeHavingItYet() {
-                        print \"Yes we are!\";
+            r#"fn areWeHavingItYet() {
+                        print "Yes we are!";
                     }
-                    print areWeHavingItYet;");
+                    print areWeHavingItYet;"#);
         assert!(result.is_some());
     }
 
@@ -1151,10 +1151,10 @@ mod tests {
         let mut parser = Parser::new(&mut object_manager, &mut intern_strings);
         
         let result = parser.compile(
-            "fn sum(a, b, c) {
+            r#"fn sum(a, b, c) {
                         return a + b + c;
                     }
-                    print 4 + sum(5, 6, 7);");
+                    print 4 + sum(5, 6, 7);"#);
         assert!(result.is_some());
     }
 }

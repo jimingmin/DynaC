@@ -849,118 +849,118 @@ mod tests {
     #[test]
     fn test_comparison_expression() {
         let mut vm = VM::new();
-        assert!(vm.interpret("!(5 - 4 > 3 * 2 == !nil);") == InterpretResult::InterpretOk);
+    assert!(vm.interpret(r"!(5 - 4 > 3 * 2 == !nil);") == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_string_concatenate() {
         let mut vm = VM::new();
-        assert!(vm.interpret("\"st\" + \"ri\" + \"ng\";") == InterpretResult::InterpretOk);
+    assert!(vm.interpret(r#""st" + "ri" + "ng";"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_print_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print 1 + 2; print 3 * 4;") == InterpretResult::InterpretOk);
+    assert!(vm.interpret(r#"print 1 + 2; print 3 * 4;"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_print_global_var() {
         let mut vm = VM::new();
-        assert!(vm.interpret("var beverage = \"coffee\"; 
-                            var breakfast = \"beignets with \" + beverage;
-                            print breakfast;") == InterpretResult::InterpretOk);
+    assert!(vm.interpret(r#"var beverage = "coffee"; 
+                var breakfast = "beignets with " + beverage;
+                print breakfast;"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_define_global_var() {
         let mut vm = VM::new();
-        assert!(vm.interpret("var beverage = \"coffee\";") == InterpretResult::InterpretOk);
+    assert!(vm.interpret(r#"var beverage = "coffee";"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_print_local_var() {
         let mut vm = VM::new();
-        assert!(vm.interpret("{var a = \"hello world!\"; a = \"111\"; print a;}") == InterpretResult::InterpretOk);
-        assert!(vm.interpret("{
-                                var a = \"the first\";
+        assert!(vm.interpret(r#"{var a = "hello world!"; a = "111"; print a;}"#) == InterpretResult::InterpretOk);
+        assert!(vm.interpret(r#"{
+                                var a = "the first";
                                 {
-                                    var a = \"the second\";
+                                    var a = "the second";
                                     print a;
                                 }
                                 print a;
-                            }") == InterpretResult::InterpretOk);
+                            }"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_if_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"test if statement...\";
+        assert!(vm.interpret(r#"print "test if statement...";
                             if (1 > 0) {
-                                print \"'1 > 0' is true\";
-                            }") == InterpretResult::InterpretOk);
+                                print "'1 > 0' is true";
+                            }"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_else_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"test else clause...\";
+        assert!(vm.interpret(r#"print "test else clause...";
                             if (1 < 0) {
-                                print \"'1 < 0' is true\";
+                                print "'1 < 0' is true";
                             } else {
-                                print \"'1 < 0' is false\";
-                            }") == InterpretResult::InterpretOk);
+                                print "'1 < 0' is false";
+                            }"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_and_operator() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"test and operator...\";
+        assert!(vm.interpret(r#"print "test and operator...";
                             if ( 1 > 0 and 2 > 1) {
-                                print \"'1 > 0 and 2 > 1' is true\";
+                                print "'1 > 0 and 2 > 1' is true";
                             } else {
-                                print \"'1 > 0 and 2 > 1' is false\";
+                                print "'1 > 0 and 2 > 1' is false";
                             }
                             
                             if ( 1 > 0 and 2 < 1) {
-                                print \"'1 > 0 and 2 < 1' is true\";
+                                print "'1 > 0 and 2 < 1' is true";
                             } else {
-                                print \"'1 > 0 and 2 < 1' is false\";
-                            }") == InterpretResult::InterpretOk);
+                                print "'1 > 0 and 2 < 1' is false";
+                            }"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_or_operator() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"test or operator...\";
+        assert!(vm.interpret(r#"print "test or operator...";
                             if ( 1 > 0 or 2 > 1) {
-                                print \"'1 > 0 or 2 > 1' is true\";
+                                print "'1 > 0 or 2 > 1' is true";
                             } else {
-                                print \"'1 > 0 or 2 > 1' is false\";
+                                print "'1 > 0 or 2 > 1' is false";
                             }
                             
                             if ( 1 > 0 or 2 < 1) {
-                                print \"'1 > 0 or 2 < 1' is true\";
+                                print "'1 > 0 or 2 < 1' is true";
                             } else {
-                                print \"'1 > 0 or 2 < 1' is false\";
-                            }") == InterpretResult::InterpretOk);
+                                print "'1 > 0 or 2 < 1' is false";
+                            }"#) == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_while_statement() {
         let mut vm = VM::new();
-        assert!(vm.interpret("print \"test while statement...\";
+        assert!(vm.interpret(r#"print "test while statement...";
                             var count = 1;
                             while (count > 0) {
                                 print count;
                                 count = count - 1;
-                            }") == InterpretResult::InterpretOk);
+                            }"#) == InterpretResult::InterpretOk);
     }
  
     #[test]
     fn test_for_statement() {
         let mut vm = VM::new();
-        let result = vm.interpret("print \"test for statement...\";
+        let result = vm.interpret(r#"print "test for statement...";
                             for(var i = 0; i < 2; i = i + 1) {
                                 print i;
                             }
@@ -972,7 +972,7 @@ mod tests {
                             for (; i < 1;) {
                                 print i;
                                 i = i + 1;
-                            }");
+                            }"#);
         assert!(result == InterpretResult::InterpretOk);
     }
 
@@ -980,10 +980,10 @@ mod tests {
     fn test_function_call() {
         let mut vm = VM::new();
         let result = vm.interpret(
-            "fn sum(a, b, c) {
+            r#"fn sum(a, b, c) {
                         return a + b + c;
                     }
-                    print 4 + sum(5, 6, 7);");
+                    print 4 + sum(5, 6, 7);"#);
         assert!(result == InterpretResult::InterpretOk);
     }
 
@@ -991,14 +991,14 @@ mod tests {
     fn test_native_function_call() {
         let mut vm = VM::new();
         let result = vm.interpret(
-            "print clock();");
+            r#"print clock();"#);
         assert!(result == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_fib_function() {
         let mut vm = VM::new();
-        let result = vm.interpret("
+        let result = vm.interpret(r#"
             fn fib(number) {
                 if (number < 2) {
                     return number;
@@ -1011,35 +1011,35 @@ mod tests {
             var result = fib(5);
             print result;
             var end = clock();
-            print end - start;");
+            print end - start;"#);
         assert!(result == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_closure() {
         let mut vm = VM::new();
-        let result = vm.interpret("
+        let result = vm.interpret(r#"
             fn outer() {
-                var x = \"outside\";
+                var x = "outside";
                 fn inner() {
                     print x;
                 }
                 return inner;
             }
             var closure = outer();
-            closure();");
+            closure();"#);
         assert!(result == InterpretResult::InterpretOk);
     }
 
     #[test]
     fn test_closure_with_shared_variable() {
         let mut vm = VM::new();
-        let result = vm.interpret("
+        let result = vm.interpret(r#"
             var globalSet;
             var globalGet;
 
             fn main() {
-                var a = \"initial\";
+                var a = "initial";
 
                 fn set(value) { a = value; }
                 fn get() { print a; }
@@ -1049,10 +1049,10 @@ mod tests {
             }
 
             main();
-            globalSet(\"updated\");
+            globalSet("updated");
             globalGet();
-            globalSet(\"initial\");
-            globalGet();");
+            globalSet("initial");
+            globalGet();"#);
         assert!(result == InterpretResult::InterpretOk);
     }    
 
@@ -1062,7 +1062,13 @@ mod tests {
         // Force an early GC so we can observe at least one cycle during this test without huge allocations.
         vm.set_gc_threshold(0);
         // Builds increasingly large string causing many intermediate unreachable strings.
-        let script = "var s = \"\"; var i = 0; while (i < 1500) { s = s + \"abcdefgh\"; i = i + 1; }";
+        let script = r#"
+            var s = "";
+            var i = 0;
+            while (i < 1500) {
+                s = s + "abcdefgh";
+                i = i + 1;
+            }"#;
         let result = vm.interpret(script);
         assert_eq!(result, InterpretResult::InterpretOk);
         // Ensure at least one GC cycle ran under allocation pressure.
@@ -1075,7 +1081,15 @@ mod tests {
         let mut vm = VM::new();
         vm.set_gc_threshold(0);
         // Restored higher iteration count to increase allocation pressure & exercise multiple GC cycles.
-        let script = "var i = 0; while (i < 300) { fn f(){ return i; } f(); i = i + 1; }";
+        let script = r#"
+            var i = 0;
+            while (i < 300) {
+                fn f() {
+                    return i;
+                }
+                f();
+                i = i + 1;
+            }"#;
         let result = vm.interpret(script);
         assert_eq!(result, InterpretResult::InterpretOk);
         assert!(vm.gc.stats().cycles > 0, "Expected GC cycles > 0, got {}", vm.gc.stats().cycles);

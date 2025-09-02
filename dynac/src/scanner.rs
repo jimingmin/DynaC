@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_check_keyword() {
-        let mut scanner = Scanner::new("this is for if fn  fn1 forfor %%dadf");
+        let mut scanner = Scanner::new(r#"this is for if fn  fn1 forfor %%dadf"#);
         let mut token = scanner.scan_token();
         assert!(token.token_type == TokenType::This);
         assert!(token.value == "this");
@@ -422,9 +422,8 @@ mod tests {
 
     #[test]
     fn test_scan_token() {
-        let source = 
-        "var a = 1;
-        var b = \"this is a string\";
+        let source = r#"var a = 1;
+        var b = "this is a string";
         while(true) {
             if (a == 1) {
                 print(a);
@@ -444,7 +443,7 @@ mod tests {
             }
             return;
         }
-        ";
+        "#;
         let mut scanner = Scanner::new(source);
         loop {
             let token = scanner.scan_token();
