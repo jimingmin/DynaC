@@ -36,6 +36,11 @@ pub enum OpCode {
     Closure,
     CloseUpvalue,
     Return,
+    ImplementTrait,
+    StructType,
+    StructInstantiate,
+    GetField,
+    SetField,
     //Unknown(u8),
 }
 
@@ -72,6 +77,11 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::Closure as u8 as usize] = Some(OpCode::Closure);
     arr[OpCode::CloseUpvalue as u8 as usize] = Some(OpCode::CloseUpvalue);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
+    arr[OpCode::ImplementTrait as u8 as usize] = Some(OpCode::ImplementTrait);
+    arr[OpCode::StructType as u8 as usize] = Some(OpCode::StructType);
+    arr[OpCode::StructInstantiate as u8 as usize] = Some(OpCode::StructInstantiate);
+    arr[OpCode::GetField as u8 as usize] = Some(OpCode::GetField);
+    arr[OpCode::SetField as u8 as usize] = Some(OpCode::SetField);
     arr
 };
 

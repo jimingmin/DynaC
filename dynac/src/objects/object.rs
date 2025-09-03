@@ -8,6 +8,8 @@ use super::{
     object_native_function::ObjectNativeFunction,
     object_string::ObjectString,
     object_upvalue::ObjectUpvalue,
+    object_trait::ObjectTrait,
+    object_struct::{ObjectStructType, ObjectStructInstance},
 };
 
 #[repr(C)]
@@ -18,6 +20,9 @@ pub enum ObjectType {
     ObjNativeFunction,
     ObjClosure,
     ObjUpvalue,
+    ObjTrait,
+    ObjStructType,
+    ObjStructInstance,
 }
 
 #[repr(C)]
@@ -44,6 +49,9 @@ impl Object {
             ObjectType::ObjNativeFunction => (*(self as *const _ as *const ObjectNativeFunction)).deep_size(),
             ObjectType::ObjClosure => (*(self as *const _ as *const ObjectClosure)).deep_size(),
             ObjectType::ObjUpvalue => (*(self as *const _ as *const ObjectUpvalue)).deep_size(),
+            ObjectType::ObjTrait => (*(self as *const _ as *const ObjectTrait)).deep_size(),
+            ObjectType::ObjStructType => (*(self as *const _ as *const ObjectStructType)).deep_size(),
+            ObjectType::ObjStructInstance => (*(self as *const _ as *const ObjectStructInstance)).deep_size(),
         }
     }
 
@@ -63,6 +71,13 @@ impl Object {
     #[inline]
     #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
     pub unsafe fn as_upvalue(&self) -> &ObjectUpvalue { debug_assert!(matches!(self.obj_type, ObjectType::ObjUpvalue)); &*(self as *const _ as *const ObjectUpvalue) }
+    #[inline]
+    #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
+    pub unsafe fn as_trait(&self) -> &ObjectTrait { debug_assert!(matches!(self.obj_type, ObjectType::ObjTrait)); &*(self as *const _ as *const ObjectTrait) }
+    #[inline]
+    pub unsafe fn as_struct_type(&self) -> &ObjectStructType { debug_assert!(matches!(self.obj_type, ObjectType::ObjStructType)); &*(self as *const _ as *const ObjectStructType) }
+    #[inline]
+    pub unsafe fn as_struct_instance(&self) -> &ObjectStructInstance { debug_assert!(matches!(self.obj_type, ObjectType::ObjStructInstance)); &*(self as *const _ as *const ObjectStructInstance) }
 }
 
 impl PartialEq for Object {
@@ -123,6 +138,30 @@ impl GcSize for ObjectNativeFunction {
 impl GcSize for ObjectUpvalue {
     fn shallow_size(&self) -> usize { size_of::<ObjectUpvalue>() }
     fn deep_size(&self) -> usize { self.shallow_size() }
+}
+
+impl GcSize for ObjectTrait {
+    fn shallow_size(&self) -> usize { size_of::<ObjectTrait>() }
+    fn deep_size(&self) -> usize {
+        self.shallow_size() + self.name.capacity() + self.method_names.iter().map(|s| s.capacity()).sum::<usize>()
+    }
+}
+
+impl GcSize for ObjectStructType {
+    fn shallow_size(&self) -> usize { size_of::<ObjectStructType>() }
+    fn deep_size(&self) -> usize {
+    // Approximate table memory: number of entries * (string capacity + Value size)
+    let table_bytes = self.field_index.iter().map(|(k, _)| k.capacity() + size_of::<crate::value::Value>()).sum::<usize>();
+    self.shallow_size() + self.name.capacity() + self.field_names.iter().map(|s| s.capacity()).sum::<usize>() + table_bytes
+    }
+}
+
+impl GcSize for ObjectStructInstance {
+    fn shallow_size(&self) -> usize { size_of::<ObjectStructInstance>() }
+    fn deep_size(&self) -> usize {
+        // fields Vec capacity * Value size
+        self.shallow_size() + self.fields.capacity() * size_of::<crate::value::Value>()
+    }
 }
 
 

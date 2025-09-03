@@ -34,7 +34,6 @@ pub enum TokenType {
 
     // Keywords.
     And,
-    Class,
     Else,
     False,
     For,
@@ -45,10 +44,13 @@ pub enum TokenType {
     Print,
     Return,
     Super,
-    This,
     True,
     Var,
     While,
+    Trait,
+    Impl,
+    Struct,
+    New,
 
     Error,
     Eof,
@@ -56,7 +58,6 @@ pub enum TokenType {
 
 static KEYWORDS: phf::Map<&'static str, TokenType> = phf::phf_map! {
     "and" => TokenType::And,
-    "class" => TokenType::Class,
     "else" => TokenType::Else,
     "if" => TokenType::If,
     "nil" => TokenType::Nil,
@@ -69,8 +70,11 @@ static KEYWORDS: phf::Map<&'static str, TokenType> = phf::phf_map! {
     "for" => TokenType::For,
     "false" => TokenType::False,
     "fn" => TokenType::Fn,
-    "this" => TokenType::This,
     "true" => TokenType::True,
+    "trait" => TokenType::Trait,
+    "impl" => TokenType::Impl,
+    "struct" => TokenType::Struct,
+    "new" => TokenType::New,
 };
 
 #[derive(Debug)]
@@ -389,7 +393,6 @@ mod tests {
     fn test_check_keyword() {
         let mut scanner = Scanner::new(r#"this is for if fn  fn1 forfor %%dadf"#);
         let mut token = scanner.scan_token();
-        assert!(token.token_type == TokenType::This);
         assert!(token.value == "this");
 
         token = scanner.scan_token();
@@ -455,5 +458,29 @@ mod tests {
                 break;
             }
         };
+    }
+
+    #[test]
+    fn test_trait_impl_keywords() {
+        let mut scanner = Scanner::new("trait Printable impl Printable for");
+        let t1 = scanner.scan_token();
+        assert_eq!(t1.token_type, TokenType::Trait);
+        let t2 = scanner.scan_token();
+        assert_eq!(t2.token_type, TokenType::Identifier);
+        let t3 = scanner.scan_token();
+        assert_eq!(t3.token_type, TokenType::Impl);
+        let t4 = scanner.scan_token();
+        assert_eq!(t4.token_type, TokenType::Identifier);
+        let t5 = scanner.scan_token();
+        assert_eq!(t5.token_type, TokenType::For); // existing keyword
+    }
+
+    #[test]
+    fn test_struct_keyword() {
+        let mut scanner = Scanner::new("struct Point");
+        let k = scanner.scan_token();
+        assert_eq!(k.token_type, TokenType::Struct);
+        let ident = scanner.scan_token();
+        assert_eq!(ident.token_type, TokenType::Identifier);
     }
 }

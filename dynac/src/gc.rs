@@ -119,6 +119,14 @@ impl GarbageCollector {
                 let upvalue = (*object).as_upvalue();
                 self.mark_value(&*upvalue.location);
             }
+            ObjectType::ObjStructType => {
+                // Only owns strings already in intern table; name & field_names are plain Strings (no GC Values)
+            }
+            ObjectType::ObjStructInstance => {
+                let inst = (*object).as_struct_instance();
+                self.mark_object(inst.struct_type as *mut Object);
+                for field in &inst.fields { self.mark_value(field); }
+            }
             _ => {}
         }
     }

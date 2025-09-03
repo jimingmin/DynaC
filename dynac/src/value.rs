@@ -129,6 +129,18 @@ impl Value {
                             // Can't deep-clone trait objects generically; return shallow copy.
                             Value { value_type: self.value_type, value_as: ValueUnion { object: self.value_as.object } }
                         }
+                        ObjectType::ObjTrait => {
+                            // Traits are immutable metadata; shallow copy pointer.
+                            Value { value_type: self.value_type, value_as: ValueUnion { object: self.value_as.object } }
+                        }
+                        ObjectType::ObjStructType => {
+                            // Metadata only, shallow copy
+                            Value { value_type: self.value_type, value_as: ValueUnion { object: self.value_as.object } }
+                        }
+                        ObjectType::ObjStructInstance => {
+                            // Shallow copy pointer (instances are mutable; deep clone semantics TBD)
+                            Value { value_type: self.value_type, value_as: ValueUnion { object: self.value_as.object } }
+                        }
                     }
                 }
             }
@@ -449,6 +461,19 @@ fn print_object(value: &Value) {
             },
             ObjectType::ObjUpvalue => {
                 print!("<upvalue>")
+            },
+            ObjectType::ObjTrait => {
+                let trait_obj = &*(object_ptr as *const crate::objects::object_trait::ObjectTrait);
+                print!("<trait {}>", trait_obj.name);
+            },
+            ObjectType::ObjStructType => {
+                let s_type = &*(object_ptr as *const crate::objects::object_struct::ObjectStructType);
+                print!("<struct {}>", s_type.name);
+            },
+            ObjectType::ObjStructInstance => {
+                let inst = &*(object_ptr as *const crate::objects::object_struct::ObjectStructInstance);
+                let s_type = unsafe { &*inst.struct_type };
+                print!("<{} instance>", s_type.name);
             }
         }
     }

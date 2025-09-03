@@ -5,6 +5,8 @@ use crate::objects::{
     object_closure::ObjectClosure,
     object_native_function::ObjectNativeFunction,
     object_upvalue::ObjectUpvalue,
+    object_trait::ObjectTrait,
+    object_struct::{ObjectStructType, ObjectStructInstance},
 };
 
 #[allow(dead_code)]
@@ -68,6 +70,27 @@ impl ObjectManager {
 
     pub fn alloc_upvalue(&mut self, location: *mut crate::value::Value) -> (*mut ObjectUpvalue, usize) {
         let obj = Box::new(ObjectUpvalue::new(location));
+        let ptr = Box::into_raw(obj);
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
+    }
+
+    pub fn alloc_trait(&mut self, name: String) -> (*mut ObjectTrait, usize) {
+        let obj = Box::new(ObjectTrait::new(name));
+        let ptr = Box::into_raw(obj);
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
+    }
+
+    pub fn alloc_struct_type(&mut self, name: String) -> (*mut ObjectStructType, usize) {
+        let obj = Box::new(ObjectStructType::new(name));
+        let ptr = Box::into_raw(obj);
+        let size = self.push_object(ptr as *mut Object);
+        (ptr, size)
+    }
+
+    pub fn alloc_struct_instance(&mut self, struct_type: *mut ObjectStructType, field_count: usize) -> (*mut ObjectStructInstance, usize) {
+        let obj = Box::new(ObjectStructInstance::new(struct_type, field_count));
         let ptr = Box::into_raw(obj);
         let size = self.push_object(ptr as *mut Object);
         (ptr, size)

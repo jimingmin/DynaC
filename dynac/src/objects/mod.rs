@@ -5,3 +5,5 @@ pub mod object_function;
 pub mod object_native_function;
 pub mod object_closure;
 pub mod object_upvalue;
+pub mod object_trait;
+pub mod object_struct;

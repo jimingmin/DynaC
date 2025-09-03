@@ -198,8 +198,18 @@ const RULES: [ParseRule; TokenType::Eof as usize + 1] = {
 
     rules[TokenType::Identifier as usize] = ParseRule::new(
         Some(|parser, can_assign| parser.variable(can_assign)), 
+        Some(|parser, can_assign| parser.dot(can_assign)),
+        Precedence::None);
+    // 'new' appears in prefix position to start a heap allocation expression
+    rules[TokenType::New as usize] = ParseRule::new(
+        Some(|parser, _can_assign| parser.new_struct()),
         None,
-        Precedence::None);    rules[TokenType::And as usize] = ParseRule::new(
+        Precedence::Primary);
+    rules[TokenType::Dot as usize] = ParseRule::new(
+        None,
+        Some(|parser, can_assign| parser.dot(can_assign)),
+        Precedence::Call);
+    rules[TokenType::And as usize] = ParseRule::new(
         None, 
         Some(|parser, can_assign| parser.and(can_assign)), 
         Precedence::And);
@@ -440,7 +450,13 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) {
-        if self.match_token(TokenType::Var) {
+        if self.match_token(TokenType::Trait) {
+            self.trait_declaration();
+        } else if self.match_token(TokenType::Impl) {
+            self.impl_declaration();
+        } else if self.match_token(TokenType::Struct) {
+            self.struct_declaration();
+        } else if self.match_token(TokenType::Var) {
             self.variable_declaration();
         } else if self.match_token(TokenType::Fn) {
             self.function_declaration();
@@ -608,7 +624,22 @@ impl<'a> Parser<'a> {
     }
 
     fn variable(&mut self, can_assign: bool) {
+        // Support struct literal: Identifier '{' fieldInits '}'
+        if self.check(TokenType::LeftBrace) {
+            // Previous token is the type name.
+            let type_name = self.previous.clone();
+            self.struct_literal(type_name);
+            return;
+        }
         self.named_variable(self.previous.clone(), can_assign)
+    }
+
+    fn new_struct(&mut self, ) {
+        // Syntax: new Identifier { field = expr, ... }
+        self.consume(TokenType::Identifier, "Expect type name after 'new'.");
+        let type_name = self.previous.clone();
+        if !self.check(TokenType::LeftBrace) { self.error("Expect '{' after type name in new expression."); return; }
+        self.struct_literal(type_name);
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) {
@@ -953,6 +984,56 @@ impl<'a> Parser<'a> {
         self.emit_bytes(OpCode::Call.to_byte(), argument_count);
     }
 
+    fn dot(&mut self, can_assign: bool) {
+        // After consuming '.', expect field name.
+        self.consume(TokenType::Identifier, "Expect property name after '.'.");
+        let name_token = self.previous.clone();
+        let name_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, name_token.value);
+        let name_index = self.make_constant(name_value);
+        if can_assign && self.match_token(TokenType::Equal) {
+            // value to assign already compiled after '=' expression
+            self.expression();
+            self.emit_bytes(OpCode::SetField.to_byte(), name_index);
+        } else {
+            self.emit_bytes(OpCode::GetField.to_byte(), name_index);
+        }
+    }
+
+    fn struct_literal(&mut self, type_name: Token) {
+        // Identifier '{' ( fieldName ':' expression (',' fieldName ':' expression)* )? '}'
+        self.consume(TokenType::LeftBrace, "Expect '{' after struct type name.");
+        let mut field_names: Vec<String> = Vec::new();
+        let mut field_name_indices: Vec<u8> = Vec::new();
+    if !self.check(TokenType::RightBrace) {
+            loop {
+                self.consume(TokenType::Identifier, "Expect field name in struct literal.");
+                let fname = self.previous.value.to_string();
+                if field_names.contains(&fname) { self.error("Duplicate field in struct literal."); }
+                field_names.push(fname.clone());
+        // Accept '=' between field name and expression (since ':' token doesn't exist yet)
+        self.consume(TokenType::Equal, "Expect '=' after field name in struct literal.");
+                // compile expression for field value (will be on stack in order)
+                self.expression();
+                // store constant index for field name to send with opcode so VM can match order
+                let fv = make_string_value(&mut self.object_manager, &mut self.intern_strings, fname.as_str());
+                let fi = self.make_constant(fv);
+                field_name_indices.push(fi);
+                if !self.match_token(TokenType::Comma) { break; }
+                if self.check(TokenType::RightBrace) { break; }
+            }
+        }
+        self.consume(TokenType::RightBrace, "Expect '}' after struct literal fields.");
+        // Push the type name as constant index (VM will resolve to struct type via registry)
+        let tname_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, type_name.value);
+        let tname_index = self.make_constant(tname_value);
+        self.emit_byte(OpCode::StructInstantiate.to_byte());
+        self.emit_byte(tname_index);
+        let count = field_name_indices.len();
+        if count > u8::MAX as usize { self.error("Too many fields in struct literal."); return; }
+        self.emit_byte(count as u8);
+        for fi in field_name_indices.iter() { self.emit_byte(*fi); }
+    }
+
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
 
@@ -988,7 +1069,10 @@ impl<'a> Parser<'a> {
 
             match self.current.token_type {
                 token_type if matches!(token_type,
-                    TokenType::Class |
+                    TokenType::Trait |
+                    TokenType::Impl |
+                    TokenType::Struct |
+                    TokenType::New |
                     TokenType::Fn |
                     TokenType::Var |
                     TokenType::For |
@@ -1027,6 +1111,133 @@ impl<'a> Parser<'a> {
 
         writeln!(&mut std::io::stderr(), ": {}", message).expect("Failed to write to stderr");
         self.has_error = true;
+    }
+
+    // -------- Trait & Impl Parsing (Step 1: grammar only, no bytecode) --------
+    fn trait_declaration(&mut self) {
+        // trait IDENTIFIER '{' ( fn IDENTIFIER '(' params? ')' ';' )* '}'
+        self.consume(TokenType::Identifier, "Expect trait name.");
+        let trait_name_token = self.previous.clone();
+        self.consume(TokenType::LeftBrace, "Expect '{' after trait name.");
+        let mut method_names: Vec<String> = Vec::new();
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            if !self.match_token(TokenType::Fn) { // recover inside trait body
+                self.error("Expect 'fn' in trait body.");
+                self.synchronize_trait_body();
+                continue;
+            }
+            self.consume(TokenType::Identifier, "Expect method name.");
+            method_names.push(self.previous.value.to_string());
+            self.consume(TokenType::LeftParen, "Expect '(' after method name.");
+            if !self.check(TokenType::RightParen) { // parameter list (names ignored)
+                loop {
+                    self.consume(TokenType::Identifier, "Expect parameter name.");
+                    if !self.match_token(TokenType::Comma) { break; }
+                }
+            }
+            self.consume(TokenType::RightParen, "Expect ')' after parameters.");
+            self.consume(TokenType::Semicolon, "Expect ';' after trait method signature.");
+        }
+        self.consume(TokenType::RightBrace, "Expect '}' after trait body.");
+        // Emit a constant for the trait name so runtime can register later.
+        let name_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, trait_name_token.value);
+        let const_index = self.make_constant(name_value);
+        // Placeholder: emit ImplementTrait with constant index and method count (u8) then each method name constant index.
+        self.emit_byte(OpCode::ImplementTrait.to_byte());
+        self.emit_byte(const_index);
+        let count = method_names.len();
+        if count > u8::MAX as usize { self.error("Too many trait methods."); return; }
+        self.emit_byte(count as u8);
+        for m in method_names.iter() {
+            let mv = make_string_value(&mut self.object_manager, &mut self.intern_strings, m.as_str());
+            let mi = self.make_constant(mv);
+            self.emit_byte(mi);
+        }
+    }
+
+    fn impl_declaration(&mut self) {
+        // impl IDENTIFIER for IDENTIFIER '{' ( fn IDENTIFIER '(' params? ')' block )* '}'
+        self.consume(TokenType::Identifier, "Expect trait name after 'impl'.");
+        self.consume(TokenType::For, "Expect 'for' after trait name.");
+        self.consume(TokenType::Identifier, "Expect target type name after 'for'.");
+        self.consume(TokenType::LeftBrace, "Expect '{' after impl header.");
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            if !self.match_token(TokenType::Fn) {
+                self.error("Expect 'fn' in impl body.");
+                self.synchronize_impl_body();
+                continue;
+            }
+            self.consume(TokenType::Identifier, "Expect method name.");
+            self.consume(TokenType::LeftParen, "Expect '(' after method name.");
+            if !self.check(TokenType::RightParen) { // params
+                loop {
+                    self.consume(TokenType::Identifier, "Expect parameter name.");
+                    if !self.match_token(TokenType::Comma) { break; }
+                }
+            }
+            self.consume(TokenType::RightParen, "Expect ')' after parameters.");
+            // Skip method body block entirely (balanced braces) without compiling.
+            self.consume(TokenType::LeftBrace, "Expect '{' to start method body.");
+            self.skip_block();
+        }
+        self.consume(TokenType::RightBrace, "Expect '}' after impl body.");
+        // No emission yet.
+    }
+
+    fn struct_declaration(&mut self) {
+        // struct IDENTIFIER '{' (field (',' field)*)? '}'
+        self.consume(TokenType::Identifier, "Expect struct name.");
+        let name_tok = self.previous.clone();
+        self.consume(TokenType::LeftBrace, "Expect '{' after struct name.");
+        let mut fields: Vec<String> = Vec::new();
+        if !self.check(TokenType::RightBrace) {
+            loop {
+                self.consume(TokenType::Identifier, "Expect field name.");
+                let fname = self.previous.value.to_string();
+                if fields.contains(&fname) { self.error("Duplicate field name in struct."); }
+                fields.push(fname);
+                if !self.match_token(TokenType::Comma) { break; }
+                if self.check(TokenType::RightBrace) { break; } // trailing comma
+            }
+        }
+        self.consume(TokenType::RightBrace, "Expect '}' after struct fields.");
+        // Emit StructType opcode payload: name constant, field count, field name constants.
+        let name_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, name_tok.value);
+        let struct_name_index = self.make_constant(name_value);
+        self.emit_byte(OpCode::StructType.to_byte());
+        self.emit_byte(struct_name_index);
+        let count = fields.len();
+        if count > u8::MAX as usize { self.error("Too many struct fields."); return; }
+        self.emit_byte(count as u8);
+        for f in fields.iter() {
+            let fv = make_string_value(&mut self.object_manager, &mut self.intern_strings, f.as_str());
+            let fi = self.make_constant(fv);
+            self.emit_byte(fi);
+        }
+    }
+
+    fn skip_block(&mut self) {
+        // Assumes '{' already consumed.
+        let mut depth = 1;
+        while depth > 0 && !self.check(TokenType::Eof) {
+            if self.match_token(TokenType::LeftBrace) { depth += 1; continue; }
+            if self.match_token(TokenType::RightBrace) { depth -= 1; continue; }
+            self.advance();
+        }
+    }
+
+    fn synchronize_trait_body(&mut self) {
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            if self.check(TokenType::Fn) { return; }
+            self.advance();
+        }
+    }
+
+    fn synchronize_impl_body(&mut self) {
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            if self.check(TokenType::Fn) { return; }
+            self.advance();
+        }
     }
 }
 

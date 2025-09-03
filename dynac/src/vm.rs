@@ -33,6 +33,7 @@ pub struct VM {
     object_manager: Box<ObjectManager>,
     intern_strings: Box<Table>,
     globals: Box<Table>,
+    struct_types: Box<Table>,
     open_upvalues: Vec<*mut ObjectUpvalue>,
     gc: GarbageCollector,
     bytes_allocated: usize,
@@ -64,6 +65,7 @@ impl VM {
                 object_manager: Box::new(ObjectManager::new()),
                 intern_strings: Box::new(Table::new()),
                 globals: Box::new(Table::new()),
+                struct_types: Box::new(Table::new()),
                 open_upvalues: Vec::new(),
                 gc: GarbageCollector::new(),
                 bytes_allocated: 0,
@@ -594,6 +596,137 @@ impl VM {
                     self.stack_top_pos = stack_top_pos;
                     self.push(result);
                 }
+                Some(chunk::OpCode::ImplementTrait) => {
+                    // Layout emitted: ImplementTrait <trait_name_const_index> <method_count> <method_name_const_index>...
+                    // We have already advanced past opcode; next byte is trait name constant index (unused now runtime), then method count, then that many indices.
+                    if let Some(_trait_name_index) = self.read_byte() {
+                        if let Some(method_count) = self.read_byte() {
+                            for _ in 0..method_count { let _ = self.read_byte(); }
+                        } else { return self.report("Malformed ImplementTrait (missing method count)"); }
+                    } else { return self.report("Malformed ImplementTrait (missing trait name index)"); }
+                }
+                Some(chunk::OpCode::StructType) => {
+                    // Layout: StructType <name_const_index> <field_count> <field_name_const_index>*
+                    let name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructType (missing name index)") } as usize;
+                    let field_count = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructType (missing field count)") } as usize;
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let name_value = unsafe { *(*chunk_ptr).get_constant(name_index) };
+                    if !is_string(&name_value) { return self.report("StructType name constant not string"); }
+                    // Collect field names
+                    let mut field_names: Vec<String> = Vec::with_capacity(field_count);
+                    for _ in 0..field_count {
+                        let fi = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructType (missing field name index)") } as usize;
+                        let fv = unsafe { *(*chunk_ptr).get_constant(fi) };
+                        if !is_string(&fv) { return self.report("StructType field name constant not string"); }
+                        let fname = unsafe { (*as_string_object(&fv)).content.clone() };
+                        field_names.push(fname);
+                    }
+                    // If already registered, ignore (redefinition warning could be added later)
+                    unsafe {
+                        let struct_name = (*as_string_object(&name_value)).content.clone();
+                        if self.struct_types.find(struct_name.as_str()).is_none() {
+                            let (stype_ptr, size) = self.object_manager.alloc_struct_type(struct_name.clone());
+                            for fname in field_names.iter() {
+                                (*stype_ptr).field_index.insert(fname.clone(), make_numer_value((*stype_ptr).field_names.len() as f64));
+                                (*stype_ptr).field_names.push(fname.clone());
+                            }
+                            // store registry value (struct type object) in struct_types table
+                            self.struct_types.insert(struct_name, Value { value_type: crate::value::ValueType::ValueObject, value_as: crate::value::ValueUnion { object: stype_ptr as *mut crate::objects::object::Object } });
+                            self.track_allocation(size);
+                        }
+                    }
+                }
+                Some(chunk::OpCode::StructInstantiate) => {
+                    // Layout emitted by compiler: StructInstantiate <type_name_const_index> <field_count> <field_name_const_index>* then field values already on stack in order of appearance
+                    let type_name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructInstantiate (missing type name index)") } as usize;
+                    let field_count = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructInstantiate (missing field count)") } as usize;
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let type_name_value = unsafe { *(*chunk_ptr).get_constant(type_name_index) };
+                    if !is_string(&type_name_value) { return self.report("StructInstantiate type name constant not string"); }
+                    let mut literal_field_names: Vec<String> = Vec::with_capacity(field_count);
+                    for _ in 0..field_count {
+                        let fi = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructInstantiate (missing field name const index)") } as usize;
+                        let fv = unsafe { *(*chunk_ptr).get_constant(fi) };
+                        if !is_string(&fv) { return self.report("StructInstantiate field name constant not string"); }
+                        let fname = unsafe { (*as_string_object(&fv)).content.clone() };
+                        literal_field_names.push(fname);
+                    }
+                    let struct_name = unsafe { (*as_string_object(&type_name_value)).content.clone() };
+                    // Lookup struct type in registry
+                    let stype_val = match self.struct_types.find(struct_name.as_str()) { Some(v) => v, None => return self.report("Unknown struct type in literal") };
+                    if stype_val.value_type != crate::value::ValueType::ValueObject { return self.report("Struct type registry entry invalid"); }
+                    if unsafe { (*stype_val.value_as.object).obj_type } != ObjectType::ObjStructType { return self.report("Registry entry not struct type"); }
+                    let stype_ptr = unsafe { stype_val.value_as.object as *mut crate::objects::object_struct::ObjectStructType };
+                    // Validate fields: order doesn't need to match definition, we'll place by index.
+                    let expected_count = unsafe { (*stype_ptr).field_names.len() };
+                    if field_count != expected_count { return self.report("Field count mismatch in struct literal"); }
+                    // Pop values in reverse order to collect, since stack has them in evaluation order.
+                    let mut provided_values: Vec<(usize, Value)> = Vec::with_capacity(field_count);
+                    for lname in literal_field_names.iter().rev() { // reverse to align with pop order
+                        let val = self.pop();
+                        // lookup index
+                        let idx_val = unsafe { (*stype_ptr).field_index.find(lname.as_str()) };
+                        if idx_val.is_none() { return self.report("Unknown field in struct literal"); }
+                        let idx_num = idx_val.unwrap();
+                        if !is_number(&idx_num) { return self.report("Corrupt field index table"); }
+                        let slot = as_number(&idx_num) as usize;
+                        provided_values.push((slot, val));
+                    }
+                    provided_values.reverse();
+                    // Allocate instance
+                    let (inst_ptr, size) = self.object_manager.alloc_struct_instance(stype_ptr, expected_count);
+                    for (slot, val) in provided_values.into_iter() { unsafe { (*inst_ptr).fields[slot] = val; } }
+                    self.track_allocation(size);
+                    // push instance value
+                    self.push(Value { value_type: crate::value::ValueType::ValueObject, value_as: crate::value::ValueUnion { object: inst_ptr as *mut crate::objects::object::Object } });
+                }
+                Some(chunk::OpCode::GetField) => {
+                    // Layout: GetField <field_name_const_index>
+                    let field_name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed GetField (missing name index)") } as usize;
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let name_val = unsafe { *(*chunk_ptr).get_constant(field_name_index) };
+                    if !is_string(&name_val) { return self.report("GetField constant not string"); }
+                    let field_name = unsafe { (*as_string_object(&name_val)).content.clone() };
+                    let receiver = self.pop();
+                    if receiver.value_type != crate::value::ValueType::ValueObject { return self.report("Only instances have fields"); }
+                    let obj_ptr = unsafe { receiver.value_as.object };
+                    let obj = unsafe { &*obj_ptr };
+                    if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Receiver not struct instance"); }
+                    let inst_ptr = obj_ptr as *mut crate::objects::object_struct::ObjectStructInstance;
+                    // lookup index
+                    let stype_ptr = unsafe { (*inst_ptr).struct_type };
+                    let idx_val = unsafe { (*stype_ptr).field_index.find(field_name.as_str()) };
+                    if idx_val.is_none() { return self.report("Unknown field on struct instance"); }
+                    let idx_v = idx_val.unwrap();
+                    if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
+                    let slot = as_number(&idx_v) as usize;
+                    let value = unsafe { (*inst_ptr).fields[slot] };
+                    self.push(value);
+                }
+                Some(chunk::OpCode::SetField) => {
+                    // Layout: SetField <field_name_const_index>; stack: receiver value (value on top)
+                    let field_name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed SetField (missing name index)") } as usize;
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let name_val = unsafe { *(*chunk_ptr).get_constant(field_name_index) };
+                    if !is_string(&name_val) { return self.report("SetField constant not string"); }
+                    let field_name = unsafe { (*as_string_object(&name_val)).content.clone() };
+                    let value = self.pop();
+                    let receiver = self.pop();
+                    if receiver.value_type != crate::value::ValueType::ValueObject { return self.report("Only instances have fields"); }
+                    let obj_ptr = unsafe { receiver.value_as.object };
+                    let obj = unsafe { &*obj_ptr };
+                    if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Receiver not struct instance"); }
+                    let inst_ptr = obj_ptr as *mut crate::objects::object_struct::ObjectStructInstance;
+                    let stype_ptr = unsafe { (*inst_ptr).struct_type };
+                    let idx_val = unsafe { (*stype_ptr).field_index.find(field_name.as_str()) };
+                    if idx_val.is_none() { return self.report("Unknown field on struct instance"); }
+                    let idx_v = idx_val.unwrap();
+                    if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
+                    let slot = as_number(&idx_v) as usize;
+                    unsafe { (*inst_ptr).fields[slot] = value; }
+                    // push assigned value like typical expression semantics
+                    self.push(value);
+                }
                 _ => return self.report("Unknown opcode"),
             }
         }
@@ -1093,6 +1226,129 @@ mod tests {
         let result = vm.interpret(script);
         assert_eq!(result, InterpretResult::InterpretOk);
         assert!(vm.gc.stats().cycles > 0, "Expected GC cycles > 0, got {}", vm.gc.stats().cycles);
+    }
+
+    #[test]
+    fn test_trait_impl_parsing_only() {
+        let mut vm = VM::new();
+        let script = r#"
+            trait Printable {
+                fn print_self();
+                fn clone();
+            }
+
+            impl Printable for string {
+                fn print_self() { print "impl running"; }
+                fn clone() { print "clone"; }
+            }
+
+            print "after trait/impl";
+        "#;
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_struct_declaration_parsing_only() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y, }
+            print "struct parsed";
+        "#;
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_struct_literal_basic() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = Point { x = 1, y = 2 };
+            print p.x; // expect 1
+            print p.y; // expect 2
+        "#;
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_struct_literal_field_order_swap() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = Point { y = 5, x = 3 }; // order reversed
+            print p.x; // expect 3
+            print p.y; // expect 5
+        "#;
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_struct_field_assignment() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = Point { x = 10, y = 20 };
+            p.x = 42;
+            print p.x; // expect 42
+            p.y = p.x + 1; // 43
+            print p.y; // expect 43
+        "#;
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_struct_literal_missing_field_error() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = Point { x = 1 }; // missing y
+        "#;
+        let result = vm.interpret(script);
+        assert_eq!(result, InterpretResult::InterpretRuntimeError);
+    }
+
+    #[test]
+    fn test_struct_field_wrong_receiver_errors() {
+        let mut vm = VM::new();
+        let script_get = r#"
+            var a = 1; a.value; // invalid get
+        "#;
+        assert_eq!(vm.interpret(script_get), InterpretResult::InterpretRuntimeError);
+
+        let mut vm2 = VM::new();
+        let script_set = r#"
+            var a = 1; a.value = 2; // invalid set
+        "#;
+        assert_eq!(vm2.interpret(script_set), InterpretResult::InterpretRuntimeError);
+    }
+
+    #[test]
+    fn test_new_struct_literal_basic() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = new Point { x = 7, y = 9 };
+            print p.x; // 7
+            print p.y; // 9
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_new_struct_field_assignment() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = new Point { x = 0, y = 0 };
+            p.x = 11;
+            p.y = p.x + 1; // 12
+            print p.x; print p.y;
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
     }
 
 }
