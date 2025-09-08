@@ -10,6 +10,11 @@ pub struct Parser<'a> {
     compilers: Vec<Compiler<'a>>,
     object_manager: &'a mut ObjectManager,
     intern_strings: &'a mut Table,
+    // Tracks whether the most recently compiled top-level expression (since last expression() call)
+    // produced a stack-allocated struct literal result. Used to forbid returning it directly.
+    last_expr_stack_struct: bool,
+    // When true, force struct literals to emit heap allocation opcode (used by 'new').
+    force_heap_struct_literal: bool,
 }
 
 struct Local<'a> {
@@ -233,6 +238,8 @@ impl<'a> Parser<'a> {
             compilers: vec![],
             object_manager,
             intern_strings,
+            last_expr_stack_struct: false,
+            force_heap_struct_literal: false,
         };
         parser.init_compiler(FunctionType::Script);
         parser
@@ -639,7 +646,11 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::Identifier, "Expect type name after 'new'.");
         let type_name = self.previous.clone();
         if !self.check(TokenType::LeftBrace) { self.error("Expect '{' after type name in new expression."); return; }
+        let prev_force = self.force_heap_struct_literal;
+        self.force_heap_struct_literal = true; // ensure heap allocation
         self.struct_literal(type_name);
+        self.force_heap_struct_literal = prev_force;
+        self.last_expr_stack_struct = false; // result is heap-based
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) {
@@ -837,6 +848,10 @@ impl<'a> Parser<'a> {
             self.emit_return();
         } else {
             self.expression();
+            if self.last_expr_stack_struct {
+                // Emit compile error; runtime also has a safety check.
+                self.error("Cannot return stack-allocated struct literal; use 'new' to allocate on heap.");
+            }
             self.consume(TokenType::Semicolon, "Expect ';' after return value.");
             self.emit_byte(OpCode::Return.to_byte());
         }
@@ -934,6 +949,8 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) {
+        // Reset flag before compiling an expression; struct_literal will set if result is stack struct.
+        self.last_expr_stack_struct = false;
         self.parse_precedence(Precedence::Assignment);
     }
 
@@ -1004,14 +1021,14 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::LeftBrace, "Expect '{' after struct type name.");
         let mut field_names: Vec<String> = Vec::new();
         let mut field_name_indices: Vec<u8> = Vec::new();
-    if !self.check(TokenType::RightBrace) {
+        if !self.check(TokenType::RightBrace) {
             loop {
                 self.consume(TokenType::Identifier, "Expect field name in struct literal.");
                 let fname = self.previous.value.to_string();
                 if field_names.contains(&fname) { self.error("Duplicate field in struct literal."); }
                 field_names.push(fname.clone());
-        // Accept '=' between field name and expression (since ':' token doesn't exist yet)
-        self.consume(TokenType::Equal, "Expect '=' after field name in struct literal.");
+                // Accept '=' between field name and expression (since ':' token doesn't exist yet)
+                self.consume(TokenType::Equal, "Expect '=' after field name in struct literal.");
                 // compile expression for field value (will be on stack in order)
                 self.expression();
                 // store constant index for field name to send with opcode so VM can match order
@@ -1026,12 +1043,19 @@ impl<'a> Parser<'a> {
         // Push the type name as constant index (VM will resolve to struct type via registry)
         let tname_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, type_name.value);
         let tname_index = self.make_constant(tname_value);
-        self.emit_byte(OpCode::StructInstantiate.to_byte());
+        // Decide heap vs stack allocation opcode based on force flag.
+        if self.force_heap_struct_literal {
+            self.emit_byte(OpCode::StructInstantiate.to_byte());
+        } else {
+            self.emit_byte(OpCode::StructInstantiateStack.to_byte());
+        }
         self.emit_byte(tname_index);
         let count = field_name_indices.len();
         if count > u8::MAX as usize { self.error("Too many fields in struct literal."); return; }
         self.emit_byte(count as u8);
         for fi in field_name_indices.iter() { self.emit_byte(*fi); }
+        // Mark whether final expression result is stack struct (only if not forced heap).
+        self.last_expr_stack_struct = !self.force_heap_struct_literal;
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) {

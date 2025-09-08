@@ -25,6 +25,7 @@ use crate::{
     },
 };
 use crate::objects::object_manager::ObjectManager;
+use crate::objects::object_struct::{ObjectStructType, ObjectStructInstance};
 
 pub struct VM {
     frames: Vec<Box<CallFrame>>,
@@ -38,6 +39,14 @@ pub struct VM {
     gc: GarbageCollector,
     bytes_allocated: usize,
     next_gc_bytes: usize,
+    // Stack struct arenas per frame index (aligned with frames vector indices)
+    frame_stack_structs: Vec<Vec<StackStruct>>, // parallel to frames; index = frames.len()-1 current
+}
+
+// Non-GC managed stack struct representation
+struct StackStruct {
+    struct_type: *mut ObjectStructType,
+    fields: Vec<Value>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -70,6 +79,7 @@ impl VM {
                 gc: GarbageCollector::new(),
                 bytes_allocated: 0,
                 next_gc_bytes: INITIAL_GC_THRESHOLD,
+                frame_stack_structs: Vec::new(),
             };
         vm
     }
@@ -139,6 +149,14 @@ impl VM {
             &self.frames,
             &self.open_upvalues,
         );
+
+        // Also mark values held inside stack-allocated struct arenas so their referenced
+        // heap objects are treated as roots during this GC cycle.
+        for arena in &self.frame_stack_structs {
+            for st in arena {
+                for field in &st.fields { self.gc.mark_value(field); }
+            }
+        }
 
         // Trace
         self.gc.trace_references();
@@ -290,6 +308,7 @@ impl VM {
         // }
         frame.set_callable_object(function as *mut Object);
         self.frames.push(Box::new(frame));
+        self.frame_stack_structs.push(Vec::new()); // new frame stack struct arena
 
         true
     }
@@ -310,6 +329,7 @@ impl VM {
         let mut frame = CallFrame::new(NonNull::new(&mut self.stack[stack_base_pos]).unwrap(), stack_base_pos);
         frame.set_callable_object(closure as *mut Object);
         self.frames.push(Box::new(frame));
+        self.frame_stack_structs.push(Vec::new());
 
         true
     }
@@ -432,8 +452,14 @@ impl VM {
                 Some(chunk::OpCode::DefineGlobal) => {
                     if let Some(object_string) = self.read_string() {
                         if let Some(value) = self.peek() {
+                            // Promote stack struct if necessary when defining a global
+                            let promoted = self.promote_stack_struct_value(value);
+                            if promoted.value_type != value.value_type { // replaced
+                                // overwrite top of stack with promoted heap instance
+                                self.stack[self.stack_top_pos - 1] = promoted;
+                            }
                             self.globals.insert((unsafe { (*object_string).clone() }).content.clone(),
-                                value);
+                                self.peek().unwrap());
                             self.pop();
                         } else {
                             return self.report(format!("No value on stack to define the global value {}.", (unsafe { (*object_string).clone() }).content).as_str());
@@ -458,6 +484,11 @@ impl VM {
                     if let Some(object_string) = self.read_string() {
                         if let Some(value) = self.peek() {
                             let key = (unsafe { (*object_string).clone() }).content.clone();
+                            // Promote if needed
+                            let promoted = self.promote_stack_struct_value(value);
+                            if promoted.value_type != value.value_type {
+                                self.stack[self.stack_top_pos - 1] = promoted;
+                            }
                             if let None = self.globals.insert(key, value) { // It's a new key that means the target key has not been defined.
                                 self.globals.remove(&(unsafe { (*object_string).clone() }).content);
                                 return self.report("Unknown global variable.");
@@ -585,10 +616,16 @@ impl VM {
                 }
                 Some(chunk::OpCode::Return) => {
                     let result = self.pop();
+                    // If returning a stack struct created in this frame -> runtime error (per spec unknown behavior -> forbid)
+                    if result.value_type == crate::value::ValueType::ValueStackStruct {
+                        // Disallow returning frame-local stack struct
+                        return self.report("Cannot return stack-allocated struct; use 'new' to allocate on heap");
+                    }
                     let last = *self.current_frame().get_stack_base();
                     self.close_upvalues(last);
                     let stack_top_pos = self.current_frame().get_stack_base_offset();
                     self.frames.pop();
+                    self.frame_stack_structs.pop(); // drop arena for this frame
                     if self.frames.is_empty() {
                         self.pop();
                         return Ok(InterpretResult::InterpretOk);
@@ -680,6 +717,49 @@ impl VM {
                     // push instance value
                     self.push(Value { value_type: crate::value::ValueType::ValueObject, value_as: crate::value::ValueUnion { object: inst_ptr as *mut crate::objects::object::Object } });
                 }
+                Some(chunk::OpCode::StructInstantiateStack) => {
+                    // Same layout as heap instantiate but produce stack struct
+                    let type_name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructInstantiateStack (missing type name index)") } as usize;
+                    let field_count = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructInstantiateStack (missing field count)") } as usize;
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let type_name_value = unsafe { *(*chunk_ptr).get_constant(type_name_index) };
+                    if !is_string(&type_name_value) { return self.report("StructInstantiateStack type name constant not string"); }
+                    let mut literal_field_names: Vec<String> = Vec::with_capacity(field_count);
+                    for _ in 0..field_count {
+                        let fi = match self.read_byte() { Some(b) => b, None => return self.report("Malformed StructInstantiateStack (missing field name const index)") } as usize;
+                        let fv = unsafe { *(*chunk_ptr).get_constant(fi) };
+                        if !is_string(&fv) { return self.report("StructInstantiateStack field name constant not string"); }
+                        let fname = unsafe { (*as_string_object(&fv)).content.clone() };
+                        literal_field_names.push(fname);
+                    }
+                    let struct_name = unsafe { (*as_string_object(&type_name_value)).content.clone() };
+                    let stype_val = match self.struct_types.find(struct_name.as_str()) { Some(v) => v, None => return self.report("Unknown struct type in stack literal") };
+                    if stype_val.value_type != crate::value::ValueType::ValueObject { return self.report("Struct type registry entry invalid"); }
+                    if unsafe { (*stype_val.value_as.object).obj_type } != ObjectType::ObjStructType { return self.report("Registry entry not struct type"); }
+                    let stype_ptr = unsafe { stype_val.value_as.object as *mut ObjectStructType };
+                    let expected_count = unsafe { (*stype_ptr).field_names.len() };
+                    if field_count != expected_count { return self.report("Field count mismatch in stack struct literal"); }
+                    let mut provided_values: Vec<(usize, Value)> = Vec::with_capacity(field_count);
+                    for lname in literal_field_names.iter().rev() {
+                        let val = self.pop();
+                        let idx_val = unsafe { (*stype_ptr).field_index.find(lname.as_str()) };
+                        if idx_val.is_none() { return self.report("Unknown field in stack struct literal"); }
+                        let idx_num = idx_val.unwrap();
+                        if !is_number(&idx_num) { return self.report("Corrupt field index table"); }
+                        let slot = as_number(&idx_num) as usize;
+                        provided_values.push((slot, val));
+                    }
+                    provided_values.reverse();
+                    let mut fields = vec![Value::new(); expected_count];
+                    for (slot, val) in provided_values.into_iter() { fields[slot] = val; }
+                    if let Some(last) = self.frame_stack_structs.last_mut() {
+                        last.push(StackStruct { struct_type: stype_ptr, fields });
+                        let index = last.len() - 1;
+                        self.push(Value { value_type: crate::value::ValueType::ValueStackStruct, value_as: crate::value::ValueUnion { stack_index: index } });
+                    } else {
+                        return self.report("No frame arena for stack struct");
+                    }
+                }
                 Some(chunk::OpCode::GetField) => {
                     // Layout: GetField <field_name_const_index>
                     let field_name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed GetField (missing name index)") } as usize;
@@ -688,19 +768,32 @@ impl VM {
                     if !is_string(&name_val) { return self.report("GetField constant not string"); }
                     let field_name = unsafe { (*as_string_object(&name_val)).content.clone() };
                     let receiver = self.pop();
-                    if receiver.value_type != crate::value::ValueType::ValueObject { return self.report("Only instances have fields"); }
-                    let obj_ptr = unsafe { receiver.value_as.object };
-                    let obj = unsafe { &*obj_ptr };
-                    if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Receiver not struct instance"); }
-                    let inst_ptr = obj_ptr as *mut crate::objects::object_struct::ObjectStructInstance;
-                    // lookup index
-                    let stype_ptr = unsafe { (*inst_ptr).struct_type };
-                    let idx_val = unsafe { (*stype_ptr).field_index.find(field_name.as_str()) };
-                    if idx_val.is_none() { return self.report("Unknown field on struct instance"); }
-                    let idx_v = idx_val.unwrap();
-                    if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
-                    let slot = as_number(&idx_v) as usize;
-                    let value = unsafe { (*inst_ptr).fields[slot] };
+                    let value = match receiver.value_type {
+                        crate::value::ValueType::ValueObject => {
+                            let obj_ptr = unsafe { receiver.value_as.object };
+                            let obj = unsafe { &*obj_ptr };
+                            if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Receiver not struct instance"); }
+                            let inst_ptr = obj_ptr as *mut ObjectStructInstance;
+                            let stype_ptr = unsafe { (*inst_ptr).struct_type };
+                            let idx_val = unsafe { (*stype_ptr).field_index.find(field_name.as_str()) };
+                            if idx_val.is_none() { return self.report("Unknown field on struct instance"); }
+                            let idx_v = idx_val.unwrap(); if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
+                            let slot = as_number(&idx_v) as usize;
+                            unsafe { (*inst_ptr).fields[slot] }
+                        }
+                        crate::value::ValueType::ValueStackStruct => {
+                            let idx = unsafe { receiver.value_as.stack_index };
+                            let arena = match self.frame_stack_structs.last() { Some(a) => a, None => return self.report("Missing frame arena") };
+                            if idx >= arena.len() { return self.report("Invalid stack struct index"); }
+                            let s = &arena[idx];
+                            let idx_val = unsafe { (*s.struct_type).field_index.find(field_name.as_str()) };
+                            if idx_val.is_none() { return self.report("Unknown field on stack struct") };
+                            let idx_v = idx_val.unwrap(); if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
+                            let slot = as_number(&idx_v) as usize;
+                            s.fields[slot]
+                        }
+                        _ => return self.report("Only instances have fields"),
+                    };
                     self.push(value);
                 }
                 Some(chunk::OpCode::SetField) => {
@@ -712,18 +805,32 @@ impl VM {
                     let field_name = unsafe { (*as_string_object(&name_val)).content.clone() };
                     let value = self.pop();
                     let receiver = self.pop();
-                    if receiver.value_type != crate::value::ValueType::ValueObject { return self.report("Only instances have fields"); }
-                    let obj_ptr = unsafe { receiver.value_as.object };
-                    let obj = unsafe { &*obj_ptr };
-                    if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Receiver not struct instance"); }
-                    let inst_ptr = obj_ptr as *mut crate::objects::object_struct::ObjectStructInstance;
-                    let stype_ptr = unsafe { (*inst_ptr).struct_type };
-                    let idx_val = unsafe { (*stype_ptr).field_index.find(field_name.as_str()) };
-                    if idx_val.is_none() { return self.report("Unknown field on struct instance"); }
-                    let idx_v = idx_val.unwrap();
-                    if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
-                    let slot = as_number(&idx_v) as usize;
-                    unsafe { (*inst_ptr).fields[slot] = value; }
+                    match receiver.value_type {
+                        crate::value::ValueType::ValueObject => {
+                            let obj_ptr = unsafe { receiver.value_as.object };
+                            let obj = unsafe { &*obj_ptr };
+                            if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Receiver not struct instance"); }
+                            let inst_ptr = obj_ptr as *mut ObjectStructInstance;
+                            let stype_ptr = unsafe { (*inst_ptr).struct_type };
+                            let idx_val = unsafe { (*stype_ptr).field_index.find(field_name.as_str()) };
+                            if idx_val.is_none() { return self.report("Unknown field on struct instance"); }
+                            let idx_v = idx_val.unwrap(); if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
+                            let slot = as_number(&idx_v) as usize;
+                            unsafe { (*inst_ptr).fields[slot] = value; }
+                        }
+                        crate::value::ValueType::ValueStackStruct => {
+                            let idx = unsafe { receiver.value_as.stack_index };
+                            let arena = match self.frame_stack_structs.last_mut() { Some(a) => a, None => return self.report("Missing frame arena") };
+                            if idx >= arena.len() { return self.report("Invalid stack struct index"); }
+                            let s = &mut arena[idx];
+                            let idx_val = unsafe { (*s.struct_type).field_index.find(field_name.as_str()) };
+                            if idx_val.is_none() { return self.report("Unknown field on stack struct"); }
+                            let idx_v = idx_val.unwrap(); if !is_number(&idx_v) { return self.report("Corrupt field index table"); }
+                            let slot = as_number(&idx_v) as usize;
+                            s.fields[slot] = value;
+                        }
+                        _ => return self.report("Only instances have fields"),
+                    }
                     // push assigned value like typical expression semantics
                     self.push(value);
                 }
@@ -904,15 +1011,39 @@ impl VM {
         //     value.1.location = NonNull::new(v).unwrap();
         // }
        let last_ptr = last.as_ptr();
-       for &up_ptr in &self.open_upvalues {
+       // Index-based loop to permit mutable borrows inside
+       for i in 0..self.open_upvalues.len() {
+           let up_ptr = self.open_upvalues[i];
            let loc = unsafe { (*up_ptr).location };
            if loc >= last_ptr {
+               // Copy value then possibly promote
+               let mut v = unsafe { *loc };
+               v = self.promote_stack_struct_value(v);
                unsafe {
-                   (*up_ptr).closed = *loc;
+                   (*up_ptr).closed = v;
                    (*up_ptr).location = &mut (*up_ptr).closed as *mut Value;
                }
            }
        }
+    }
+
+    // Promote a ValueStackStruct to a heap ObjectStructInstance (deeply promoting nested stack structs)
+    fn promote_stack_struct_value(&mut self, value: Value) -> Value {
+        if value.value_type != crate::value::ValueType::ValueStackStruct { return value; }
+        let idx = unsafe { value.value_as.stack_index };
+        // Extract data needed without holding immutable borrow across allocation
+        let (struct_type_ptr, field_values) = {
+            match self.frame_stack_structs.last() { Some(arena) => {
+                if idx >= arena.len() { return value; }
+                let s = &arena[idx];
+                (s.struct_type, s.fields.clone())
+            }, None => return value }
+        };
+        let field_count = field_values.len();
+        let (inst_ptr, size) = self.object_manager.alloc_struct_instance(struct_type_ptr, field_count);
+        for i in 0..field_count { unsafe { (*inst_ptr).fields[i] = self.promote_stack_struct_value(field_values[i]); } }
+        self.track_allocation(size);
+        Value { value_type: crate::value::ValueType::ValueObject, value_as: crate::value::ValueUnion { object: inst_ptr as *mut crate::objects::object::Object } }
     }
 
     fn report(&mut self, message: &str) -> Result<InterpretResult, String> {
@@ -1351,4 +1482,63 @@ mod tests {
         assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
     }
 
+    #[test]
+    fn test_return_stack_struct_compile_error() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            fn make() { return Point { x = 1, y = 2 }; }
+        "#; // returning stack struct literal should be compile error
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretCompileError);
+    }
+
+    #[test]
+    fn test_return_heap_struct_allowed() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            fn make() { return new Point { x = 1, y = 2 }; }
+            var p = make();
+            print p.x; print p.y;
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_closure_captures_promoted_struct() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            fn makeGetter() {
+                var p = Point { x = 3, y = 4 };
+                fn getX() { return p.x; }
+                return getX;
+            }
+            var gx = makeGetter();
+            print gx(); // expect 3
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_global_promotion_struct() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var gp = Point { x = 10, y = 20 }; // should promote to heap
+            gp.x = 15;
+            print gp.x; // expect 15
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_return_expression() {
+        let mut vm = VM::new();
+        let script = r#"
+            fn f() { return 1 + 2; }
+            print f(); // expect 3
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
 }

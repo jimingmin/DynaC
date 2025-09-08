@@ -39,6 +39,7 @@ pub enum OpCode {
     ImplementTrait,
     StructType,
     StructInstantiate,
+    StructInstantiateStack,
     GetField,
     SetField,
     //Unknown(u8),
@@ -80,6 +81,7 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::ImplementTrait as u8 as usize] = Some(OpCode::ImplementTrait);
     arr[OpCode::StructType as u8 as usize] = Some(OpCode::StructType);
     arr[OpCode::StructInstantiate as u8 as usize] = Some(OpCode::StructInstantiate);
+    arr[OpCode::StructInstantiateStack as u8 as usize] = Some(OpCode::StructInstantiateStack);
     arr[OpCode::GetField as u8 as usize] = Some(OpCode::GetField);
     arr[OpCode::SetField as u8 as usize] = Some(OpCode::SetField);
     arr

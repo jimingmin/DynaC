@@ -8,6 +8,7 @@ pub enum ValueType {
     ValueNil,
     ValueNumber,
     ValueObject,
+    ValueStackStruct, // stack lifetime struct (frame-local)
 }
 
 impl Copy for ValueType {}
@@ -21,6 +22,7 @@ pub union ValueUnion {
     pub boolean: bool,
     pub number: f64,
     pub object: *mut Object,
+    pub stack_index: usize, // index into frame-local stack struct store
 }
 
 impl Copy for ValueUnion {}
@@ -143,6 +145,10 @@ impl Value {
                         }
                     }
                 }
+                ValueType::ValueStackStruct => {
+                    // Stack structs are not deep-cloned here (alias semantics). Shallow copy index.
+                    Value { value_type: ValueType::ValueStackStruct, value_as: ValueUnion { stack_index: unsafe { self.value_as.stack_index } } }
+                }
             }
         }
     }
@@ -164,6 +170,9 @@ impl PartialEq for Value {
                 }
                 ValueType::ValueObject => {
                     self.value_as.object == other.value_as.object
+                }
+                ValueType::ValueStackStruct => {
+                    self.value_as.stack_index == other.value_as.stack_index
                 }
                 ValueType::ValueNil => true,
             }
@@ -214,6 +223,7 @@ impl PartialOrd for Value {
                     Some(std::cmp::Ordering::Less)
                 }
             }
+            ValueType::ValueStackStruct => None,
         }
     }
 }
@@ -237,6 +247,9 @@ pub fn is_number(value: &Value) -> bool {
 pub fn is_object(value: &Value) -> bool {
     value.value_type == ValueType::ValueObject
 }
+
+#[inline(always)]
+pub fn is_stack_struct(value: &Value) -> bool { value.value_type == ValueType::ValueStackStruct }
 
 #[inline(always)]
 pub fn is_string(value: &Value) -> bool {
@@ -429,6 +442,9 @@ pub fn print_value(value: &Value) {
         }
         ValueType::ValueObject => {
             print_object(value);
+        }
+        ValueType::ValueStackStruct => {
+            print!("<stack struct>");
         }
     // all ValueType variants are handled above
     }
