@@ -1,4 +1,3 @@
-
 use crate::objects::{object::{Object, ObjectType}, object_closure::ObjectClosure, object_function::{ObjectFunction}, object_manager::ObjectManager, object_native_function::ObjectNativeFunction, object_string::ObjectString, object_upvalue::ObjectUpvalue};
 use crate::table::Table;
 

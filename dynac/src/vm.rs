@@ -26,6 +26,7 @@ use crate::{
 };
 use crate::objects::object_manager::ObjectManager;
 use crate::objects::object_struct::{ObjectStructType, ObjectStructInstance};
+use std::collections::HashMap;
 
 pub struct VM {
     frames: Vec<Box<CallFrame>>,
@@ -35,6 +36,9 @@ pub struct VM {
     intern_strings: Box<Table>,
     globals: Box<Table>,
     struct_types: Box<Table>,
+    trait_registry: Box<Table>, // name -> trait object
+    // Method registry: type name -> Table(method name -> function/closure value)
+    type_methods: HashMap<String, Table>,
     open_upvalues: Vec<*mut ObjectUpvalue>,
     gc: GarbageCollector,
     bytes_allocated: usize,
@@ -75,6 +79,8 @@ impl VM {
                 intern_strings: Box::new(Table::new()),
                 globals: Box::new(Table::new()),
                 struct_types: Box::new(Table::new()),
+                trait_registry: Box::new(Table::new()),
+                type_methods: HashMap::new(),
                 open_upvalues: Vec::new(),
                 gc: GarbageCollector::new(),
                 bytes_allocated: 0,
@@ -158,6 +164,11 @@ impl VM {
             }
         }
 
+        // Mark trait registry values (trait objects)
+        for (_, v) in self.trait_registry.iter() { self.gc.mark_value(v); }
+    // Mark method tables for each type
+    for (_t, tbl) in self.type_methods.iter() { for (_k, v) in tbl.iter() { self.gc.mark_value(v); } }
+
         // Trace
         self.gc.trace_references();
 
@@ -178,6 +189,11 @@ impl VM {
             self.bytes_allocated / 1024,
             self.next_gc_bytes / 1024
         );
+    }
+
+    #[inline]
+    fn warn(&self, message: &str) {
+        eprintln!("[warn] {}", message);
     }
 
     fn setup_standards(&mut self) {
@@ -453,7 +469,7 @@ impl VM {
                     if let Some(object_string) = self.read_string() {
                         if let Some(value) = self.peek() {
                             // Promote stack struct if necessary when defining a global
-                            let promoted = self.promote_stack_struct_value(value);
+                            let promoted = self.promote_stack_struct_value_reason(value, Some("global assignment"), 0);
                             if promoted.value_type != value.value_type { // replaced
                                 // overwrite top of stack with promoted heap instance
                                 self.stack[self.stack_top_pos - 1] = promoted;
@@ -485,7 +501,7 @@ impl VM {
                         if let Some(value) = self.peek() {
                             let key = (unsafe { (*object_string).clone() }).content.clone();
                             // Promote if needed
-                            let promoted = self.promote_stack_struct_value(value);
+                            let promoted = self.promote_stack_struct_value_reason(value, Some("global assignment"), 0);
                             if promoted.value_type != value.value_type {
                                 self.stack[self.stack_top_pos - 1] = promoted;
                             }
@@ -583,6 +599,62 @@ impl VM {
                         return self.report("There are not enough bytes to read a short.");
                     }
                 }
+                Some(chunk::OpCode::Invoke) => {
+                    // Layout: Invoke <method_name_const_index> <arg_count>
+                    let method_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed Invoke (missing method index)") } as usize;
+                    let arg_count = match self.read_byte() { Some(b) => b, None => return self.report("Malformed Invoke (missing arg count)") };
+                    // Callee is receiver at distance arg_count from top (like Call)
+                    let receiver = self.peek_steps(arg_count as usize).unwrap();
+                    // Determine type name for method table lookup
+                    let type_name = match receiver.value_type {
+                        crate::value::ValueType::ValueObject => {
+                            let obj_ptr = unsafe { receiver.value_as.object };
+                            let obj = unsafe { &*obj_ptr };
+                            if obj.obj_type != ObjectType::ObjStructInstance { return self.report("Invoke receiver must be struct instance"); }
+                            let inst_ptr = obj_ptr as *mut ObjectStructInstance;
+                            let stype_ptr = unsafe { (*inst_ptr).struct_type };
+                            unsafe { (*stype_ptr).name.clone() }
+                        }
+                        crate::value::ValueType::ValueStackStruct => {
+                            let idx = unsafe { receiver.value_as.stack_index };
+                            let arena = match self.frame_stack_structs.last() { Some(a) => a, None => return self.report("Missing frame arena") };
+                            if idx >= arena.len() { return self.report("Invalid stack struct index"); }
+                            let s = &arena[idx];
+                            unsafe { (*s.struct_type).name.clone() }
+                        }
+                        _ => return self.report("Invoke receiver must be object or stack struct"),
+                    };
+                    // Resolve method function
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let mval = unsafe { *(*chunk_ptr).get_constant(method_index) };
+                    if !is_string(&mval) { return self.report("Invoke method name constant not string"); }
+                    let mname = unsafe { (*as_string_object(&mval)).content.clone() };
+                    match self.type_methods.get(type_name.as_str()) {
+                        Some(table) => {
+                            match table.find(mname.as_str()) {
+                                Some(func_val) => {
+                                    // Stack layout before: [..., receiver, arg1, ..., argN]
+                                    // Insert callee before receiver so layout becomes: [..., callee, receiver, arg1, ..., argN]
+                                    let insert_pos = self.stack_top_pos - arg_count as usize - 1;
+                                    if self.stack_top_pos >= MAX_STACK_SIZE { return self.report("Stack overflow during invoke"); }
+                                    // make room
+                                    let old_top = self.stack_top_pos;
+                                    self.stack_top_pos += 1;
+                                    // shift right
+                                    let mut i = old_top;
+                                    while i > insert_pos { self.stack[i] = self.stack[i-1]; i -= 1; }
+                                    // insert callee
+                                    self.stack[insert_pos] = func_val;
+                                    // include receiver as first arg
+                                    let new_argc = arg_count + 1;
+                                    if !self.call_value(func_val, new_argc) { return self.report("Invoke call failed"); }
+                                }
+                                None => return self.report(format!("Unknown method '{}' for type '{}'", mname, type_name).as_str()),
+                            }
+                        }
+                        None => return self.report(format!("No methods registered for type '{}'", type_name).as_str()),
+                    }
+                }
                 Some(chunk::OpCode::Closure) => {
                     if let Some(function_index) = self.read_constant() {
                         let object_function = as_function_object(&function_index) as *mut ObjectFunction;
@@ -635,12 +707,60 @@ impl VM {
                 }
                 Some(chunk::OpCode::ImplementTrait) => {
                     // Layout emitted: ImplementTrait <trait_name_const_index> <method_count> <method_name_const_index>...
-                    // We have already advanced past opcode; next byte is trait name constant index (unused now runtime), then method count, then that many indices.
-                    if let Some(_trait_name_index) = self.read_byte() {
-                        if let Some(method_count) = self.read_byte() {
-                            for _ in 0..method_count { let _ = self.read_byte(); }
-                        } else { return self.report("Malformed ImplementTrait (missing method count)"); }
-                    } else { return self.report("Malformed ImplementTrait (missing trait name index)"); }
+                    let name_index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplementTrait (missing name index)") } as usize;
+                    let method_count = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplementTrait (missing method count)") } as usize;
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let name_val = unsafe { *(*chunk_ptr).get_constant(name_index) };
+                    let mut methods: Vec<String> = Vec::with_capacity(method_count);
+                    for _ in 0..method_count {
+                        let mi = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplementTrait (missing method name index)") } as usize;
+                        let mv = unsafe { *(*chunk_ptr).get_constant(mi) };
+                        if !is_string(&mv) { return self.report("Trait method name constant not string"); }
+                        methods.push(unsafe { (*as_string_object(&mv)).content.clone() });
+                    }
+                    // Accept either a trait object constant or a name string constant
+                    if is_object(&name_val) && unsafe { (*name_val.value_as.object).obj_type } == ObjectType::ObjTrait {
+                        let tptr = unsafe { name_val.value_as.object as *mut crate::objects::object_trait::ObjectTrait };
+                        let tname = unsafe { (*tptr).name.clone() };
+                        unsafe { (*tptr).method_names = methods; }
+                        self.trait_registry.insert(tname, name_val);
+                    } else if is_string(&name_val) {
+                        let trait_name = unsafe { (*as_string_object(&name_val)).content.clone() };
+                        if self.trait_registry.find(trait_name.as_str()).is_none() {
+                            let (tptr, size) = self.object_manager.alloc_trait(trait_name.clone());
+                            unsafe { (*tptr).method_names = methods; }
+                            self.trait_registry.insert(trait_name, Value { value_type: crate::value::ValueType::ValueObject, value_as: crate::value::ValueUnion { object: tptr as *mut crate::objects::object::Object } });
+                            self.track_allocation(size);
+                        }
+                    } else { return self.report("ImplementTrait constant must be trait object or name string"); }
+                }
+                Some(chunk::OpCode::ImplRegister) => {
+                    // Layout: ImplRegister <trait_name_idx> <type_name_idx> <method_count> then pairs: <method_name_idx> <function_const_idx>
+                    let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
+                    let trait_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing trait index)") } as usize;
+                    let type_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing type index)") } as usize;
+                    let count = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing method count)") } as usize;
+                    let trait_val = unsafe { *(*chunk_ptr).get_constant(trait_idx) };
+                    let type_val = unsafe { *(*chunk_ptr).get_constant(type_idx) };
+                    if !is_string(&trait_val) || !is_string(&type_val) { return self.report("ImplRegister expects string constants"); }
+                    let trait_name = unsafe { (*as_string_object(&trait_val)).content.clone() };
+                    let type_name = unsafe { (*as_string_object(&type_val)).content.clone() };
+                    // Ensure trait exists
+                    if self.trait_registry.find(trait_name.as_str()).is_none() { return self.report("ImplRegister references unknown trait"); }
+                    // Collect entries first to avoid borrowing self during reads
+                    let mut entries: Vec<(String, Value)> = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let mname_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing method name index)") } as usize;
+                        let fn_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing function const index)") } as usize;
+                        let mname_val = unsafe { *(*chunk_ptr).get_constant(mname_idx) };
+                        let fval = unsafe { *(*chunk_ptr).get_constant(fn_idx) };
+                        if !is_string(&mname_val) { return self.report("ImplRegister method name not string"); }
+                        // Accept only object functions/closures; ignore placeholders
+                        if !is_object(&fval) { continue; }
+                        entries.push((unsafe { (*as_string_object(&mname_val)).content.clone() }, fval));
+                    }
+                    let table = self.type_methods.entry(type_name.clone()).or_insert_with(Table::new);
+                    for (mn, fv) in entries { table.insert(mn, fv); }
                 }
                 Some(chunk::OpCode::StructType) => {
                     // Layout: StructType <name_const_index> <field_count> <field_name_const_index>*
@@ -1018,7 +1138,7 @@ impl VM {
            if loc >= last_ptr {
                // Copy value then possibly promote
                let mut v = unsafe { *loc };
-               v = self.promote_stack_struct_value(v);
+               v = self.promote_stack_struct_value_reason(v, Some("closure capture"), 0);
                unsafe {
                    (*up_ptr).closed = v;
                    (*up_ptr).location = &mut (*up_ptr).closed as *mut Value;
@@ -1028,20 +1148,30 @@ impl VM {
     }
 
     // Promote a ValueStackStruct to a heap ObjectStructInstance (deeply promoting nested stack structs)
-    fn promote_stack_struct_value(&mut self, value: Value) -> Value {
+    fn promote_stack_struct_value_reason(&mut self, value: Value, reason: Option<&str>, depth: usize) -> Value {
         if value.value_type != crate::value::ValueType::ValueStackStruct { return value; }
+        if depth == 0 {
+            if let Some(r) = reason { self.warn(&format!("Implicit promotion of stack struct to heap ({})", r)); }
+        }
         let idx = unsafe { value.value_as.stack_index };
-        // Extract data needed without holding immutable borrow across allocation
-        let (struct_type_ptr, field_values) = {
-            match self.frame_stack_structs.last() { Some(arena) => {
-                if idx >= arena.len() { return value; }
-                let s = &arena[idx];
-                (s.struct_type, s.fields.clone())
-            }, None => return value }
+        // Extract metadata and a raw pointer to fields without holding an immutable borrow across allocations.
+        let (struct_type_ptr, field_len, fields_ptr) = {
+            match self.frame_stack_structs.last() {
+                Some(arena) => {
+                    if idx >= arena.len() { return value; }
+                    let s = &arena[idx];
+                    (s.struct_type, s.fields.len(), s.fields.as_ptr())
+                }
+                None => return value,
+            }
         };
-        let field_count = field_values.len();
-        let (inst_ptr, size) = self.object_manager.alloc_struct_instance(struct_type_ptr, field_count);
-        for i in 0..field_count { unsafe { (*inst_ptr).fields[i] = self.promote_stack_struct_value(field_values[i]); } }
+        // Allocate heap instance
+        let (inst_ptr, size) = self.object_manager.alloc_struct_instance(struct_type_ptr, field_len);
+        // Copy and promote each field without cloning the entire vector
+        for i in 0..field_len {
+            let fv = unsafe { *fields_ptr.add(i) };
+            unsafe { (*inst_ptr).fields[i] = self.promote_stack_struct_value_reason(fv, None, depth + 1); }
+        }
         self.track_allocation(size);
         Value { value_type: crate::value::ValueType::ValueObject, value_as: crate::value::ValueUnion { object: inst_ptr as *mut crate::objects::object::Object } }
     }
@@ -1540,5 +1670,112 @@ mod tests {
             print f(); // expect 3
         "#;
         assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_nested_struct_promotion_in_global() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Inner { a }
+            struct Outer { i }
+            var g = Outer { i = Inner { a = 7 } }; // promotion should deep-copy inner
+            print g.i.a; // expect 7
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_nested_struct_promotion_in_closure() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Inner { a }
+            struct Outer { i }
+            fn make() {
+                var o = Outer { i = Inner { a = 42 } };
+                fn get() { return o.i.a; }
+                return get;
+            }
+            var g = make();
+            print g(); // expect 42
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_heap_instance_assignment_alias() {
+        // Assigning a heap struct instance to another variable should alias the same object.
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = new Point { x = 1, y = 2 };
+            var q = p; // alias, no deep copy
+            q.x = 99;
+            print p.x; // expect 99
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_heap_instance_pass_by_reference() {
+        // Passing a heap struct instance to a function should mutate the same object.
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            fn setX(pt) { pt.x = 77; }
+            var p = new Point { x = 1, y = 2 };
+            setX(p);
+            print p.x; // expect 77
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_stack_instance_assignment_alias_same_frame() {
+        // Stack-allocated struct aliases by index within the same frame.
+        let mut vm = VM::new();
+        let script = r#"
+            struct P { a }
+            {
+                var s = P { a = 5 };
+                var t = s; // alias same stack struct within frame
+                t.a = 8;
+                print s.a; // expect 8
+            }
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_trait_invoke_on_struct() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+
+            trait Summable {
+                fn sum();
+                fn add(v);
+            }
+
+            impl Summable for Point {
+                fn sum() { return self.x + self.y; }
+                fn add(v) { return self.x + self.y + v; }
+            }
+
+            var p = new Point { x = 2, y = 3 };
+            print p.sum(); // 5
+            print p.add(5); // 10
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_invoke_unknown_method_errors() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Point { x, y }
+            var p = new Point { x = 1, y = 2 };
+            p.nope(); // no impl registered
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretRuntimeError);
     }
 }

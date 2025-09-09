@@ -37,11 +37,13 @@ pub enum OpCode {
     CloseUpvalue,
     Return,
     ImplementTrait,
+    ImplRegister,
     StructType,
     StructInstantiate,
     StructInstantiateStack,
     GetField,
     SetField,
+    Invoke,
     //Unknown(u8),
 }
 
@@ -79,11 +81,13 @@ const OPCODE_ARRAY: [Option<OpCode>; 256] = {
     arr[OpCode::CloseUpvalue as u8 as usize] = Some(OpCode::CloseUpvalue);
     arr[OpCode::Return as u8 as usize] = Some(OpCode::Return);
     arr[OpCode::ImplementTrait as u8 as usize] = Some(OpCode::ImplementTrait);
+    arr[OpCode::ImplRegister as u8 as usize] = Some(OpCode::ImplRegister);
     arr[OpCode::StructType as u8 as usize] = Some(OpCode::StructType);
     arr[OpCode::StructInstantiate as u8 as usize] = Some(OpCode::StructInstantiate);
     arr[OpCode::StructInstantiateStack as u8 as usize] = Some(OpCode::StructInstantiateStack);
     arr[OpCode::GetField as u8 as usize] = Some(OpCode::GetField);
     arr[OpCode::SetField as u8 as usize] = Some(OpCode::SetField);
+    arr[OpCode::Invoke as u8 as usize] = Some(OpCode::Invoke);
     arr
 };
 

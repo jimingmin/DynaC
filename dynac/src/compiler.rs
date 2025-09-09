@@ -997,21 +997,30 @@ impl<'a> Parser<'a> {
     }
 
     fn call(&mut self, _can_assign: bool) {
+        // If the callee was produced by a dot access with an identifier immediately before '(',
+        // we will already have compiled the receiver expression on stack. For now, default to Call.
+        // More precise lowering handled in dot() when it sees a call situation.
         let argument_count = self.argument_list();
         self.emit_bytes(OpCode::Call.to_byte(), argument_count);
     }
 
     fn dot(&mut self, can_assign: bool) {
-        // After consuming '.', expect field name.
+        // After consuming '.', expect identifier for field or method.
         self.consume(TokenType::Identifier, "Expect property name after '.'.");
         let name_token = self.previous.clone();
         let name_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, name_token.value);
         let name_index = self.make_constant(name_value);
         if can_assign && self.match_token(TokenType::Equal) {
-            // value to assign already compiled after '=' expression
+            // Assignment: obj.field = expr
             self.expression();
             self.emit_bytes(OpCode::SetField.to_byte(), name_index);
+        } else if self.match_token(TokenType::LeftParen) {
+            // Method call: obj.method(args)
+            let argc = self.argument_list();
+            self.emit_bytes(OpCode::Invoke.to_byte(), name_index);
+            self.emit_byte(argc);
         } else {
+            // Field get
             self.emit_bytes(OpCode::GetField.to_byte(), name_index);
         }
     }
@@ -1163,9 +1172,10 @@ impl<'a> Parser<'a> {
             self.consume(TokenType::Semicolon, "Expect ';' after trait method signature.");
         }
         self.consume(TokenType::RightBrace, "Expect '}' after trait body.");
-        // Emit a constant for the trait name so runtime can register later.
-        let name_value = make_string_value(&mut self.object_manager, &mut self.intern_strings, trait_name_token.value);
-        let const_index = self.make_constant(name_value);
+        // Allocate a trait object now and store as a constant for runtime registration.
+        let (trait_ptr, _sz) = self.object_manager.alloc_trait(trait_name_token.value.to_string());
+        let trait_value = Value { value_type: ValueType::ValueObject, value_as: ValueUnion { object: trait_ptr as *mut crate::objects::object::Object } };
+        let const_index = self.make_constant(trait_value);
         // Placeholder: emit ImplementTrait with constant index and method count (u8) then each method name constant index.
         self.emit_byte(OpCode::ImplementTrait.to_byte());
         self.emit_byte(const_index);
@@ -1182,30 +1192,83 @@ impl<'a> Parser<'a> {
     fn impl_declaration(&mut self) {
         // impl IDENTIFIER for IDENTIFIER '{' ( fn IDENTIFIER '(' params? ')' block )* '}'
         self.consume(TokenType::Identifier, "Expect trait name after 'impl'.");
+        let trait_name_tok = self.previous.clone();
         self.consume(TokenType::For, "Expect 'for' after trait name.");
         self.consume(TokenType::Identifier, "Expect target type name after 'for'.");
+        let type_name_tok = self.previous.clone();
         self.consume(TokenType::LeftBrace, "Expect '{' after impl header.");
+        // Compile each method body into a function object constant and record mapping.
+        let mut method_entries: Vec<(u8, u8)> = Vec::new(); // (method_name_const_idx, function_const_idx)
         while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
             if !self.match_token(TokenType::Fn) {
                 self.error("Expect 'fn' in impl body.");
                 self.synchronize_impl_body();
                 continue;
             }
+            // Method name
             self.consume(TokenType::Identifier, "Expect method name.");
+            let method_name_tok = self.previous.clone();
+            let mname_val = make_string_value(&mut self.object_manager, &mut self.intern_strings, method_name_tok.value);
+            let mname_idx = self.make_constant(mname_val);
+
+            // Compile method function with implicit 'self' receiver parameter.
+            // Initialize new compiler context for this function
+            self.init_compiler(FunctionType::Function);
+            // Function name was set from previous token by init_compiler
+            self.begin_scope();
+            // Inject implicit 'self' parameter as a local and arity +1
+            {
+                let scope_depth = self.current_compiler().scope_depth; // after begin_scope -> 1
+                // Create a synthetic token for 'self' using static str; comparisons use string equality
+                let self_tok = Token { token_type: TokenType::Identifier, value: "self", line: method_name_tok.line };
+                self.current_locals_mut().push(Local { name: self_tok, depth: scope_depth, captured: false });
+                self.current_function_mut().arity = self.current_function().arity.saturating_add(1);
+            }
+            // Parse parameter list and body
             self.consume(TokenType::LeftParen, "Expect '(' after method name.");
             if !self.check(TokenType::RightParen) { // params
                 loop {
-                    self.consume(TokenType::Identifier, "Expect parameter name.");
+                    self.current_function_mut().arity += 1;
+                    if self.current_function_mut().arity >= 255 {
+                        self.error("Can't have more than 255 parameters.");
+                    }
+                    let param_const = self.parse_variable("Expect parameter name.");
+                    self.define_variable(param_const);
                     if !self.match_token(TokenType::Comma) { break; }
                 }
             }
             self.consume(TokenType::RightParen, "Expect ')' after parameters.");
-            // Skip method body block entirely (balanced braces) without compiling.
-            self.consume(TokenType::LeftBrace, "Expect '{' to start method body.");
-            self.skip_block();
+            self.consume(TokenType::LeftBrace, "Expect '{' before method body.");
+            self.block();
+
+            let upvalues = self.current_compiler().upvalues.clone();
+            // Temporary restriction: impl methods cannot capture outer locals yet.
+            if !upvalues.is_empty() {
+                self.error("impl methods cannot capture outer variables yet.");
+            }
+            let object_function = self.end_compiler().expect("Unexpected function object.");
+            unsafe { (*object_function).upvalue_count = upvalues.len(); }
+            // Add function object to constants; do NOT emit Closure here.
+            let fn_const_idx = self.make_constant(make_function_value(object_function));
+
+            method_entries.push((mname_idx, fn_const_idx));
         }
         self.consume(TokenType::RightBrace, "Expect '}' after impl body.");
-        // No emission yet.
+        // Emit ImplRegister: trait name, type name, method count, then pairs of (method name const idx, function const idx).
+        let trait_name_val = make_string_value(&mut self.object_manager, &mut self.intern_strings, trait_name_tok.value);
+        let trait_name_idx = self.make_constant(trait_name_val);
+        let type_name_val = make_string_value(&mut self.object_manager, &mut self.intern_strings, type_name_tok.value);
+        let type_name_idx = self.make_constant(type_name_val);
+        self.emit_byte(OpCode::ImplRegister.to_byte());
+        self.emit_byte(trait_name_idx);
+        self.emit_byte(type_name_idx);
+        let cnt = method_entries.len();
+        if cnt > u8::MAX as usize { self.error("Too many impl methods."); return; }
+        self.emit_byte(cnt as u8);
+        for (mi, fi) in method_entries.into_iter() {
+            self.emit_byte(mi);
+            self.emit_byte(fi);
+        }
     }
 
     fn struct_declaration(&mut self) {
