@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::value::{as_string_object, Value, ValueType};
+use crate::value::Value;
 
 
 pub struct Table {
@@ -19,11 +19,6 @@ impl Table {
     }
 
     pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
-        //let key = Rc::from((unsafe { &*object_string }).content.as_str());
-        if value.value_type == ValueType::ValueObject {
-            let _string = as_string_object(&value);
-            //println!("insert key : {}, value : {}", key, unsafe {&(*string)}.content);
-        }
         self.entries.insert(key, value)
     }
 

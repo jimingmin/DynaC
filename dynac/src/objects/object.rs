@@ -75,6 +75,7 @@ impl Object {
     #[cfg_attr(not(feature = "gc_debug"), allow(dead_code))]
     pub unsafe fn as_trait(&self) -> &ObjectTrait { debug_assert!(matches!(self.obj_type, ObjectType::ObjTrait)); &*(self as *const _ as *const ObjectTrait) }
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn as_struct_type(&self) -> &ObjectStructType { debug_assert!(matches!(self.obj_type, ObjectType::ObjStructType)); &*(self as *const _ as *const ObjectStructType) }
     #[inline]
     pub unsafe fn as_struct_instance(&self) -> &ObjectStructInstance { debug_assert!(matches!(self.obj_type, ObjectType::ObjStructInstance)); &*(self as *const _ as *const ObjectStructInstance) }

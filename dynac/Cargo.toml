@@ -11,6 +11,7 @@ debug_trace_execution = []
 debug_print_code = []
 debug_trace_object = []
 gc_debug = []
+promotion_warnings = []
 
 [dependencies]
 strum = "0.24"

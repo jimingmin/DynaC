@@ -5,7 +5,6 @@ pub struct ClockTime;
 
 impl NativeObject for ClockTime {
     fn run(&self, _args: &Option<ValueArray>) -> Result<Value, String> {
-        println!("Called ClockTime");
         let now = SystemTime::now();
         let duration = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
         Ok(make_numer_value(duration.as_millis() as f64))

@@ -1197,8 +1197,8 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::Identifier, "Expect target type name after 'for'.");
         let type_name_tok = self.previous.clone();
         self.consume(TokenType::LeftBrace, "Expect '{' after impl header.");
-        // Compile each method body into a function object constant and record mapping.
-        let mut method_entries: Vec<(u8, u8)> = Vec::new(); // (method_name_const_idx, function_const_idx)
+        // Compile each method body; record entries of (method name const, function const, upvalue descriptors)
+        let mut method_entries: Vec<(u8, u8, Vec<(bool, u8)>)> = Vec::new();
         while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
             if !self.match_token(TokenType::Fn) {
                 self.error("Expect 'fn' in impl body.");
@@ -1242,19 +1242,16 @@ impl<'a> Parser<'a> {
             self.block();
 
             let upvalues = self.current_compiler().upvalues.clone();
-            // Temporary restriction: impl methods cannot capture outer locals yet.
-            if !upvalues.is_empty() {
-                self.error("impl methods cannot capture outer variables yet.");
-            }
             let object_function = self.end_compiler().expect("Unexpected function object.");
             unsafe { (*object_function).upvalue_count = upvalues.len(); }
-            // Add function object to constants; do NOT emit Closure here.
+            
+            // Do not emit a Closure now; store function const and emit upvalues in ImplRegister payload
             let fn_const_idx = self.make_constant(make_function_value(object_function));
-
-            method_entries.push((mname_idx, fn_const_idx));
+            let uv_pairs: Vec<(bool, u8)> = upvalues.iter().map(|uv| (uv.is_local, uv.index as u8)).collect();
+            method_entries.push((mname_idx, fn_const_idx, uv_pairs));
         }
         self.consume(TokenType::RightBrace, "Expect '}' after impl body.");
-        // Emit ImplRegister: trait name, type name, method count, then pairs of (method name const idx, function const idx).
+        // Emit ImplRegister: trait name, type name, method count, then for each: method name, function const, upvalue descriptors.
         let trait_name_val = make_string_value(&mut self.object_manager, &mut self.intern_strings, trait_name_tok.value);
         let trait_name_idx = self.make_constant(trait_name_val);
         let type_name_val = make_string_value(&mut self.object_manager, &mut self.intern_strings, type_name_tok.value);
@@ -1265,9 +1262,15 @@ impl<'a> Parser<'a> {
         let cnt = method_entries.len();
         if cnt > u8::MAX as usize { self.error("Too many impl methods."); return; }
         self.emit_byte(cnt as u8);
-        for (mi, fi) in method_entries.into_iter() {
+        for (mi, fi, uv) in method_entries.into_iter() {
             self.emit_byte(mi);
             self.emit_byte(fi);
+            if uv.len() > u8::MAX as usize { self.error("Too many upvalues in impl method."); return; }
+            self.emit_byte(uv.len() as u8);
+            for (is_local, idx) in uv.into_iter() {
+                self.emit_byte(if is_local { 1 } else { 0 });
+                self.emit_byte(idx);
+            }
         }
     }
 
@@ -1303,6 +1306,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn skip_block(&mut self) {
         // Assumes '{' already consumed.
         let mut depth = 1;

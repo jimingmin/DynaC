@@ -146,7 +146,7 @@ impl Value {
                 }
                 ValueType::ValueStackStruct => {
                     // Stack structs are not deep-cloned here (alias semantics). Shallow copy index.
-                    Value { value_type: ValueType::ValueStackStruct, value_as: ValueUnion { stack_index: unsafe { self.value_as.stack_index } } }
+                    Value { value_type: ValueType::ValueStackStruct, value_as: ValueUnion { stack_index: self.value_as.stack_index } }
                 }
             }
         }
@@ -247,6 +247,7 @@ pub fn is_object(value: &Value) -> bool {
     value.value_type == ValueType::ValueObject
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn is_stack_struct(value: &Value) -> bool { value.value_type == ValueType::ValueStackStruct }
 
@@ -378,37 +379,25 @@ pub fn make_string_value(object_manager: &mut ObjectManager, intern_strings: &mu
 }
 
 pub fn make_function_value(function: *mut ObjectFunction) -> Value {
-    Value {
-        value_type: ValueType::ValueObject,
-        value_as: ValueUnion {
-            object: function as *mut Object
-        }
-    }
+    let obj_ptr = unsafe { &mut (*function).object as *mut Object };
+    Value { value_type: ValueType::ValueObject, value_as: ValueUnion { object: obj_ptr } }
 }
 
 pub fn make_native_function_value(function: *mut ObjectNativeFunction) -> Value {
-    Value {
-        value_type: ValueType::ValueObject,
-        value_as: ValueUnion {
-            object: function as *mut Object
-        }
-    }
+    let obj_ptr = unsafe { &mut (*function).object as *mut Object };
+    Value { value_type: ValueType::ValueObject, value_as: ValueUnion { object: obj_ptr } }
 }
 
 pub fn make_closure_value(closure: *mut ObjectClosure) -> Value {
-    Value {
-        value_type: ValueType::ValueObject,
-        value_as: ValueUnion {
-            object: closure as *mut Object
-        }
-    }
+    let obj_ptr = unsafe { &mut (*closure).object as *mut Object };
+    Value { value_type: ValueType::ValueObject, value_as: ValueUnion { object: obj_ptr } }
 }
 
 #[inline(always)]
 #[allow(dead_code)]
 pub fn make_upvalue(upvalue: *mut ObjectUpvalue) -> Value {
     Value {
-        value_type: ValueType::ValueNumber,
+        value_type: ValueType::ValueObject,
         value_as: ValueUnion {
             object: upvalue as *mut Object
         }
@@ -487,7 +476,7 @@ fn print_object(value: &Value) {
             },
             ObjectType::ObjStructInstance => {
                 let inst = &*(object_ptr as *const crate::objects::object_struct::ObjectStructInstance);
-                let s_type = unsafe { &*inst.struct_type };
+                let s_type = &*inst.struct_type;
                 print!("<{} instance>", s_type.name);
             }
         }

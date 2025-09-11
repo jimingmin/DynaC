@@ -104,10 +104,14 @@ impl GarbageCollector {
         match (*object).obj_type {
             ObjectType::ObjClosure => {
                 let closure = (*object).as_closure();
+                // Mark referenced function object
                 self.mark_object(closure.function as *mut Object);
-                for upvalue in &closure.upvalues {
-                    self.mark_object(*upvalue as *mut Object);
-                }
+                // Upvalues holds indices into VM.open_upvalues (usize), NOT object pointers.
+                // The open upvalues list itself is provided as a root by the VM; when closed,
+                // each ObjectUpvalue is reachable via that root set. So nothing to mark here.
+                // for upvalue in &closure.upvalues {
+                //     self.mark_object(*upvalue as *mut Object);
+                // }
             }
             ObjectType::ObjFunction => {
                 let function = (*object).as_function();
@@ -194,6 +198,7 @@ impl GarbageCollector {
         gc_trace!("cycle summary cycles={} freed={} before={} after={} next_trigger={}", self.stats.cycles, freed, before, after, next_trigger);
     }
 
+    #[allow(dead_code)]
     pub fn stats(&self) -> &GCStats { &self.stats }
 }
 

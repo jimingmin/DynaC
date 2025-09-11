@@ -102,7 +102,7 @@ impl VM {
 
             self.call_function(function_ptr, 0);
         } else {
-            println!("Compile Error!");
+            eprintln!("Compile Error!");
             return InterpretResult::InterpretCompileError;
         }
 
@@ -111,7 +111,7 @@ impl VM {
         match self.run() {
             Ok(result) => result,
             Err(e) => {
-                println!("Error during interpretation: {}", e);
+                eprintln!("Error during interpretation: {}", e);
                 return InterpretResult::InterpretRuntimeError;
             },
         }
@@ -166,8 +166,10 @@ impl VM {
 
         // Mark trait registry values (trait objects)
         for (_, v) in self.trait_registry.iter() { self.gc.mark_value(v); }
-    // Mark method tables for each type
-    for (_t, tbl) in self.type_methods.iter() { for (_k, v) in tbl.iter() { self.gc.mark_value(v); } }
+        // Mark struct type registry (struct type objects)
+        for (_name, v) in self.struct_types.iter() { self.gc.mark_value(v); }
+        // Mark method tables for each type
+        for (_t, tbl) in self.type_methods.iter() { for (_k, v) in tbl.iter() { self.gc.mark_value(v); } }
 
         // Trace
         self.gc.trace_references();
@@ -193,7 +195,10 @@ impl VM {
 
     #[inline]
     fn warn(&self, message: &str) {
+        #[cfg(feature = "promotion_warnings")]
         eprintln!("[warn] {}", message);
+        #[cfg(not(feature = "promotion_warnings"))]
+        let _ = message; // no-op when feature disabled
     }
 
     fn setup_standards(&mut self) {
@@ -647,6 +652,7 @@ impl VM {
                                     self.stack[insert_pos] = func_val;
                                     // include receiver as first arg
                                     let new_argc = arg_count + 1;
+                                    
                                     if !self.call_value(func_val, new_argc) { return self.report("Invoke call failed"); }
                                 }
                                 None => return self.report(format!("Unknown method '{}' for type '{}'", mname, type_name).as_str()),
@@ -735,7 +741,9 @@ impl VM {
                     } else { return self.report("ImplementTrait constant must be trait object or name string"); }
                 }
                 Some(chunk::OpCode::ImplRegister) => {
-                    // Layout: ImplRegister <trait_name_idx> <type_name_idx> <method_count> then pairs: <method_name_idx> <function_const_idx>
+                    // Layout: ImplRegister <trait_name_idx> <type_name_idx> <method_count>
+                    // Then for each method: <method_name_idx> <function_const_idx> <upvalue_count> [<is_local> <index>] * upvalue_count
+                    // We'll allocate a closure per method and register it in type_methods[type_name][method_name].
                     let chunk_ptr = unsafe { self.current_chunk() } as *mut Box<Chunk>;
                     let trait_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing trait index)") } as usize;
                     let type_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing type index)") } as usize;
@@ -745,22 +753,60 @@ impl VM {
                     if !is_string(&trait_val) || !is_string(&type_val) { return self.report("ImplRegister expects string constants"); }
                     let trait_name = unsafe { (*as_string_object(&trait_val)).content.clone() };
                     let type_name = unsafe { (*as_string_object(&type_val)).content.clone() };
-                    // Ensure trait exists
                     if self.trait_registry.find(trait_name.as_str()).is_none() { return self.report("ImplRegister references unknown trait"); }
-                    // Collect entries first to avoid borrowing self during reads
-                    let mut entries: Vec<(String, Value)> = Vec::with_capacity(count);
+
                     for _ in 0..count {
+                        // Read method name
                         let mname_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing method name index)") } as usize;
-                        let fn_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing function const index)") } as usize;
                         let mname_val = unsafe { *(*chunk_ptr).get_constant(mname_idx) };
-                        let fval = unsafe { *(*chunk_ptr).get_constant(fn_idx) };
                         if !is_string(&mname_val) { return self.report("ImplRegister method name not string"); }
-                        // Accept only object functions/closures; ignore placeholders
-                        if !is_object(&fval) { continue; }
-                        entries.push((unsafe { (*as_string_object(&mname_val)).content.clone() }, fval));
+                        let method_name = unsafe { (*as_string_object(&mname_val)).content.clone() };
+
+                        // Read function constant and build closure
+                        let fn_idx = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing function const index)") } as usize;
+                        let fn_val = unsafe { *(*chunk_ptr).get_constant(fn_idx) };
+                        if !is_object(&fn_val) { return self.report("ImplRegister function const not object"); }
+                        
+                        if unsafe { (*fn_val.value_as.object).obj_type } != ObjectType::ObjFunction { return self.report("ImplRegister constant is not a function object"); }
+                        let func_ptr = unsafe { fn_val.value_as.object as *mut ObjectFunction };
+                        let (closure_ptr, size) = self.object_manager.alloc_closure(func_ptr);
+                        
+
+                        // Create Value and push NOW to keep closure rooted during potential GC
+                        let closure_value = make_closure_value(closure_ptr);
+                        self.push(closure_value);
+                        
+
+                        // Read and attach upvalues to the new closure
+                        let upvalue_count = match self.read_byte() { Some(b) => b as usize, None => return self.report("Malformed ImplRegister (missing upvalue count)") };
+                        for _ in 0..upvalue_count {
+                            let is_local = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing upvalue is_local flag)") };
+                            let index = match self.read_byte() { Some(b) => b, None => return self.report("Malformed ImplRegister (missing upvalue index)") };
+                            if is_local == 0 {
+                                // Capture from enclosing closure's upvalues
+                                let upvalues = &mut self.current_frame().closure().upvalues;
+                                let uv_index = upvalues.get(index as usize).unwrap().clone();
+                                unsafe { (*closure_ptr).upvalues.push(uv_index); }
+                            } else {
+                                // Capture a local from the current frame
+                                let slot = unsafe { self.current_frame().get_stack_base().add(index as usize) };
+                                let upvalue_index = self.capture_upvalue(slot);
+                                unsafe { (*closure_ptr).upvalues.push(upvalue_index); }
+                            }
+                        }
+
+                        // Closure already pushed; add to registry table BEFORE accounting/GC
+                        let top = self.peek().unwrap();
+                        {
+                            let table = self.type_methods.entry(type_name.clone()).or_insert_with(Table::new);
+                            table.insert(method_name.clone(), top);
+                        }
+                        // Now account bytes; table/root already holds a copy to prevent GC reclamation
+                        self.track_allocation(size);
+                        
+                        self.pop();
                     }
-                    let table = self.type_methods.entry(type_name.clone()).or_insert_with(Table::new);
-                    for (mn, fv) in entries { table.insert(mn, fv); }
+                    
                 }
                 Some(chunk::OpCode::StructType) => {
                     // Layout: StructType <name_const_index> <field_count> <field_name_const_index>*
@@ -1185,22 +1231,14 @@ impl VM {
     }
 
     fn runtime_error(&mut self, message: &str) -> Result<InterpretResult, String> {
-    // Calculate instruction offset for error reporting
-            let frame = self.current_frame();
-            let instruction_index = *frame.ip() - 1;
-            let chunk = unsafe { self.current_chunk() };
-            if let Some(instruction) = chunk.read_from_offset(instruction_index) {
-                if let Some(line) = chunk.read_line_from_offset(instruction as usize) {
-                    //eprintln!("[line {}] in script", line);
-                    return Err(format_args!("Runtime error: {} [line {}] in script", message, line).to_string());
-                } else {
-                    return Err(format_args!("Runtime error: {} [line ???] in script (invalid instruction index)", message).to_string());
-                    //eprintln!("[line ???] in script (invalid instruction index)");
-                }
-            } else {
-                return Err(format_args!("Runtime error: {} [instruction ???] in script (invalid instruction)", message).to_string());
-                //eprintln!("[instruction ???] in script (invalid instruction)");
-            }
+        // Use the current instruction pointer to map back to source line
+        let frame = self.current_frame();
+        let instruction_index = *frame.ip() - 1;
+        let chunk = unsafe { self.current_chunk() };
+        if let Some(line) = chunk.read_line_from_offset(instruction_index) {
+            return Err(format!("Runtime error: {} [line {}] in script", message, line));
+        }
+        Err(format!("Runtime error: {} [instruction {}] in script (no line info)", message, instruction_index))
     }
 }
 
@@ -1777,5 +1815,46 @@ mod tests {
             p.nope(); // no impl registered
         "#;
         assert_eq!(vm.interpret(script), InterpretResult::InterpretRuntimeError);
+    }
+
+    #[test]
+    fn test_impl_method_captures_local() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Box { v }
+            fn make() {
+                var bias = 7;
+                impl Adder for Box {
+                    fn add(x) { return self.v + x + bias; }
+                }
+                return bias;
+            }
+            trait Adder { fn add(x); }
+            make();
+            var b = new Box { v = 3 };
+            print b.add(2); // expect 12 (3 + 2 + 7)
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
+    }
+
+    #[test]
+    fn test_impl_method_captures_enclosing_closure() {
+        let mut vm = VM::new();
+        let script = r#"
+            struct Box { v }
+            trait Adder { fn add(x); }
+            fn outer() {
+                var base = 10;
+                fn inner() {
+                    var bias = 5;
+                    impl Adder for Box { fn add(x) { return self.v + x + base + bias; } }
+                }
+                inner();
+            }
+            outer();
+            var b = new Box { v = 1 };
+            print b.add(2); // expect 18 (1 + 2 + 10 + 5)
+        "#;
+        assert_eq!(vm.interpret(script), InterpretResult::InterpretOk);
     }
 }
