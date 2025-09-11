@@ -99,16 +99,19 @@ Statements
 - Block:
 	- { declarationOrStatement* }
 
-Expressions
+- Expressions
 - Precedence (low → high):
-	1. or
-	2. and
-	3. equality: ==, !=
-	4. comparison: <, <=, >, >=
-	5. term: +, -
-	6. factor: *, /
-	7. unary: !, -
-	8. call, property access: ( … ), .name
+
+| Level | Operators / Forms              | Description                 |
+|------:|--------------------------------|-----------------------------|
+| 1     | or                             | Logical OR                  |
+| 2     | and                            | Logical AND                 |
+| 3     | ==, !=                         | Equality                    |
+| 4     | <, <=, >, >=                   | Comparison                  |
+| 5     | +, -                           | Addition, subtraction       |
+| 6     | *, /                           | Multiplication, division    |
+| 7     | !, - (unary)                   | Logical NOT, numeric negate |
+| 8     | call (…), .name                | Function call, field access |
 - Grouping: ( expression )
 - Function call: callee ( arguments? ) with comma-separated arguments
 - Property/field access: receiver.name
