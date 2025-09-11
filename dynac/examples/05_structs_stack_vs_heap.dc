@@ -1,0 +1,16 @@
+// Structs: declaration, stack vs heap instantiation, field access and assignment
+struct Point { x, y }
+
+// Stack-allocated literal (frame-local)
+{
+    var p = Point { x = 1, y = 2 };
+    print p.x; // 1
+    p.y = 5;   // allowed within frame
+    print p.y; // 5
+}
+
+// Heap-allocated using 'new' (escapes frame)
+var q = new Point { x = 7, y = 9 };
+print q.x; // 7
+q.x = 10;
+print q.x; // 10

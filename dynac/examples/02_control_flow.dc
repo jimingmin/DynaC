@@ -1,0 +1,20 @@
+// If/else, while, for
+print "-- if/else --";
+var x = 3;
+if (x > 2) {
+	print "big";
+} else {
+	print "small";
+}
+
+print "-- while --";
+var i = 0;
+while (i < 3) {
+	print i;
+	i = i + 1;
+}
+
+print "-- for --";
+for (var j = 0; j < 3; j = j + 1) {
+	print j;
+}

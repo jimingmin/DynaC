@@ -1,0 +1,20 @@
+// Traits and impl methods with 'self'
+struct Point { x, y }
+
+trait Summable {
+    fn sum();
+    fn add(v);
+}
+
+impl Summable for Point {
+    fn sum() {
+        return self.x + self.y;
+    }
+    fn add(v) {
+        return self.x + self.y + v;
+    }
+}
+
+var p = new Point { x = 2, y = 3 };
+print p.sum(); // 5
+print p.add(5); // 10

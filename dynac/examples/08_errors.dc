@@ -1,0 +1,10 @@
+// Examples of runtime and compile errors
+// 1) Accessing a field on non-struct should error at runtime
+var a = 1;
+a.value; // expect runtime error
+
+// 2) Returning a stack-allocated struct literal is a compile error
+struct P { x }
+fn make() {
+	return P { x = 1 };
+} // expect compile error

@@ -1,0 +1,10 @@
+// Native function: clock()
+var t1 = clock();
+var sum = 0;
+var i = 0;
+while (i < 5) {
+	sum = sum + i;
+	i = i + 1;
+}
+var t2 = clock();
+print t2 - t1;

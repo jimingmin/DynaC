@@ -83,7 +83,11 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 2 {
-        println!("Usage: dynac script.dc");
+        let program = std::path::Path::new(&args[0])
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("dynac");
+        eprintln!("Usage: {program} <script.dc>");
         process::exit(64);
     } else if args.len() == 2 {
         run_file(&args[1]);

@@ -1,0 +1,11 @@
+// Variables and expressions
+var a = 1;
+var b = 2;
+var c = a + b * 3 - 4 / 2;
+print a; // 1
+print b; // 2
+print c; // 1 + 6 - 2 = 5
+
+// Reassignment
+c = c + 10;
+print c; // 15

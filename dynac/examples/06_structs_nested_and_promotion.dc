@@ -1,0 +1,18 @@
+// Nested structs and promotion behavior
+struct Inner { a }
+struct Outer { i }
+
+// Global gets heap promotion
+var g = Outer { i = Inner { a = 42 } };
+print g.i.a; // 42
+
+// Closure captures a stack struct and promotes it
+fn make() {
+    var o = Outer { i = Inner { a = 7 } };
+    fn get() {
+        return o.i.a;
+    }
+    return get;
+}
+var getter = make();
+print getter(); // 7
