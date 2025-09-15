@@ -86,7 +86,7 @@ fn main() {
         let program = std::path::Path::new(&args[0])
             .file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("dynac");
+            .unwrap_or("latte");
         eprintln!("Usage: {program} <script.dc>");
         process::exit(64);
     } else if args.len() == 2 {

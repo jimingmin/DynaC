@@ -1,56 +1,56 @@
-# DynaC
+# Latte
 
-DynaC is a small dynamic language with a bytecode VM, garbage collection, closures, first-class functions, structs, and traits/impl-style methods.
+Latte is a small dynamic language with a bytecode VM, garbage collection, closures, first-class functions, structs, and traits/impl-style methods.
 
 
-## Build the `dynac` binary first
+## Build the `latte` binary first
 
 Prerequisites
 - Rust toolchain (stable). Install via rustup.
 
 Build (release recommended)
-- From the repo root, build the executable named `dynac`:
+- From the repo root, build the executable named `latte`:
 
 ```
-cargo build --release --manifest-path dynac/Cargo.toml
+cargo build --release --manifest-path Cargo.toml
 ```
 
 The binary will be at:
-- `dynac/target/release/dynac` (Linux/macOS)
+- `target/release/latte` (Linux/macOS)
 
 Optionally install to your PATH:
 
 ```
-cargo install --path dynac
+cargo install --path latte
 ```
 
-This makes the `dynac` command available globally.
+This makes the `latte` command available globally.
 
 ## Run your scripts
 
 Using the built binary directly:
 
 ```
-./dynac/target/release/dynac path/to/your_script.dc
+./target/release/latte path/to/your_script.dc
 ```
 
 If installed with `cargo install`:
 
 ```
-dynac path/to/your_script.dc
+latte path/to/your_script.dc
 ```
 
 Run the REPL (no file argument):
 
 ```
-dynac
+latte
 ```
 
 Examples
-- Run the provided examples with the `dynac` binary:
+- Run the provided examples with the `latte` binary:
 
 ```
-dynac examples/00_hello.dc
+latte examples/00_hello.dc
 ```
 
 
